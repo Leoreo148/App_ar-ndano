@@ -31,7 +31,7 @@ def cargar_todos_los_datos():
         return { "error": "No se pudo conectar a Supabase." }
     
     tablas = [
-        "Fenología", "Fitosanidad", "Mosca_Fruta_Monitoreo", "Fertirriego_Registros"
+        "Fenología", "Fitosanidad", "Mosca_Fruta_Monitoreo", "Riego_Registros""
     ]
     dataframes = {}
     try:
@@ -53,7 +53,7 @@ if "error" in datos:
 df_fenologia = datos.get("Fenología", pd.DataFrame())
 df_fitosanidad = datos.get("Fitosanidad", pd.DataFrame())
 df_mosca = datos.get("Mosca_Fruta_Monitoreo", pd.DataFrame())
-df_fertirriego = datos.get("Fertirriego_Registros", pd.DataFrame())
+df_fertirriego = datos.get("Riego_Registros", pd.DataFrame())
 
 # Convertir columnas de fecha para asegurar el tipo correcto
 for df in [df_fenologia, df_fitosanidad, df_mosca, df_fertirriego]:
