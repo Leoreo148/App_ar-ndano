@@ -116,7 +116,7 @@ with st.expander("📝 Registrar Preparación de Mezcla", expanded=True):
                         "CE_final": ce_final,
                         "Observaciones": observaciones
                     }
-                    supabase.table('Fertirriego_Registros').insert(datos_para_insertar).execute()
+                    supabase.table('Riego_Registros').insert(datos_para_insertar).execute() 
                     st.success("¡Registro de fertirriego guardado exitosamente!")
                 except Exception as e:
                     st.error(f"Error al guardar en Supabase: {e}")
