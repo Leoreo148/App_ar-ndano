@@ -62,11 +62,10 @@ def to_excel(df):
         df.to_excel(writer, index=False, sheet_name='Reporte_Fenologia_Arandano')
     return output.getvalue()
 
-# --- Interfaz de Registro ---
+# --- Interfaz de Registro (Versión Dinámica) ---
 with st.expander("➕ Registrar Nueva Evaluación", expanded=True):
     col1, col2 = st.columns(2)
     with col1:
-        # --- (CAMBIO 2) Sectores actualizados con la información de hileras y variedades ---
         sectores_del_fundo = [
             'Hilera 1 (21 Emerald)',
             'Hilera 2 (23 Biloxi/Emerald)',
@@ -76,26 +75,33 @@ with st.expander("➕ Registrar Nueva Evaluación", expanded=True):
     with col2:
         fecha_evaluacion = st.date_input("Fecha de Evaluación", datetime.now(), key="fenologia_fecha")
 
-    st.subheader("Tabla de Ingreso de Datos (Muestra de 15 Plantas)")
-    
-    # --- (CAMBIO 3) Plantilla de datos con las nuevas columnas y tipos de dato ---
-    num_plantas_muestra = 15
-    plant_numbers = [f"Planta {i+1}" for i in range(num_plantas_muestra)]
+    # --- LÓGICA DINÁMICA PARA EL NÚMERO DE PLANTAS ---
+    # Extraemos el número de plantas del texto del sector seleccionado
+    try:
+        num_plantas_actual = int(sector_seleccionado.split('(')[1].split(' ')[0])
+    except:
+        num_plantas_actual = 20 # Un valor por defecto por si acaso
+
+    st.subheader(f"Tabla de Ingreso de Datos ({num_plantas_actual} Plantas)")
+
+    # La tabla ahora se genera con el número exacto de plantas para la hilera
+    plant_numbers = [f"Planta {i+1}" for i in range(num_plantas_actual)]
     plantilla_data = {
-        'N° Brotes Nuevos': [0] * num_plantas_muestra,
-        'Diámetro Tallo (mm)': [0.0] * num_plantas_muestra,
-        'N° Hojas/Brote': [0] * num_plantas_muestra,
-        'Coloración Hojas': ['Verde oscuro'] * num_plantas_muestra,
-        'Yemas Axilares': [False] * num_plantas_muestra
+        'N° Brotes Nuevos': [0] * num_plantas_actual,
+        'Diámetro Tallo (mm)': [0.0] * num_plantas_actual,
+        'N° Hojas/Brote': [0] * num_plantas_actual,
+        'Coloración Hojas': ['Verde oscuro'] * num_plantas_actual,
+        'Yemas Axilares': [False] * num_plantas_actual
     }
     df_plantilla = pd.DataFrame(plantilla_data, index=plant_numbers)
 
-    # --- (CAMBIO 4) Data editor mejorado con st.column_config ---
+    # El data_editor sigue igual, solo que ahora recibe un DataFrame con el tamaño correcto
     df_editada = st.data_editor(
         df_plantilla,
         use_container_width=True,
         key="editor_fenologia",
         column_config={
+            # ... (la configuración de las columnas no cambia)
             "N° Brotes Nuevos": st.column_config.NumberColumn("N° Brotes", min_value=0, step=1),
             "Diámetro Tallo (mm)": st.column_config.NumberColumn("Diámetro (mm)", min_value=0.0, format="%.2f"),
             "N° Hojas/Brote": st.column_config.NumberColumn("N° Hojas", min_value=0, step=1),
@@ -107,7 +113,7 @@ with st.expander("➕ Registrar Nueva Evaluación", expanded=True):
             "Yemas Axilares": st.column_config.CheckboxColumn("Yemas", default=False)
         }
     )
-
+    
     if st.button("💾 Guardar en Dispositivo"):
         df_para_guardar = df_editada.copy()
         df_para_guardar['Sector'] = sector_seleccionado
