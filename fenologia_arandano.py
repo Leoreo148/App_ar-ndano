@@ -107,7 +107,7 @@ with st.expander("➕ Registrar Nueva Evaluación", expanded=True):
             "N° Hojas/Brote": st.column_config.NumberColumn("N° Hojas", min_value=0, step=1),
             "Coloración Hojas": st.column_config.SelectboxColumn(
                 "Coloración",
-                options=['Verde oscuro', 'Verde claro', 'Amarillento (Clorosis)', 'Puntas necróticas'],
+                options=['Verde oscuro', 'Verde claro', 'Amarillento (Clorosis)', 'Puntas necróticas', 'Rojizo'],
                 required=True
             ),
             "Yemas Axilares": st.column_config.CheckboxColumn("Yemas", default=False)
