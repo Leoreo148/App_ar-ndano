@@ -49,7 +49,7 @@ def cargar_fenologia_supabase():
     if supabase:
         try:
             # Asegúrate de que el nombre de la tabla sea el correcto en tu Supabase
-            response = supabase.table('Evaluaciones_Fenologicas').select("*").execute()
+            response = supabase.table('Fenología').select("*").execute()
             df = pd.DataFrame(response.data)
             return df
         except Exception as e:
