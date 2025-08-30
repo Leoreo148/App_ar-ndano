@@ -1,0 +1,10 @@
+streamlit
+pandas
+scikit-learn
+joblib
+plotly
+streamlit-local-storage
+openpyxl
+XlsxWriter
+supabase
+streamlit>=1.30.0
