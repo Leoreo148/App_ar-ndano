@@ -74,7 +74,7 @@ with st.expander("➕ Iniciar y Registrar Sesión de Monitoreo"):
         st.subheader(f"2. Registrar Trampas para el Sector: **{st.session_state.sector_actual}**")
         with st.form("nueva_trampa_form", clear_on_submit=True):
             numero_trampa = st.text_input("Número o Código de Trampa", placeholder="Ej: T1, 105")
-            tipo_trampa = st.selectbox("Tipo de Trampa", ["Jackson", "McPhail", "Otro"])
+            tipo_trampa = st.selectbox("Tipo de Trampa", ["Levadura", "Panel", "Conetrap"])
             capturas_capitata = st.number_input("Ceratitis capitata", min_value=0, step=1)
             capturas_fraterculus = st.number_input("Anastrepha fraterculus", min_value=0, step=1)
             capturas_distinta = st.number_input("Anastrepha distinta", min_value=0, step=1)
