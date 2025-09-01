@@ -31,7 +31,7 @@ def cargar_todos_los_datos():
         return { "error": "No se pudo conectar a Supabase." }
     
     tablas = [
-        "Fenología", "Fitosanidad", "Mosca_Fruta_Monitoreo", "Riego_Registros"
+        "Evaluaciones_Fenologicas", "Fitosanidad", "Mosca_Fruta_Monitoreo", "Riego_Registros"
     ]
     dataframes = {}
     try:
