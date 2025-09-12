@@ -11,8 +11,7 @@ st.set_page_config(page_title="Fenología del Arándano", page_icon="🌱", layo
 st.title("🌱 Evaluación Fenológica del Arándano")
 st.write("Registre las mediciones de crecimiento y estado para cada planta de la hilera seleccionada.")
 
-# --- Archivo de Configuración (Simulado) ---
-# En un proyecto más grande, esto podría estar en un archivo config.py
+# --- Archivo de Configuración ---
 HILERAS = {
     'Hilera 1 (21 Emerald)': 21,
     'Hilera 2 (23 Biloxi/Emerald)': 23,
@@ -65,21 +64,26 @@ with st.expander("➕ Registrar Nueva Evaluación por Planta", expanded=True):
         num_plantas = HILERAS[hilera_seleccionada]
         st.subheader(f"2. Ingrese los datos para las {num_plantas} plantas de la '{hilera_seleccionada}'")
 
+        # CORREGIDO: Se crea un prefijo único para las claves para evitar conflictos de estado
+        key_prefix = hilera_seleccionada.replace(" ", "_").replace("/", "_").replace("(", "").replace(")", "")
+
         # Crear una estructura para guardar los datos de cada planta
         datos_plantas = []
         for i in range(num_plantas):
             st.markdown(f"--- \n **Planta {i+1}**")
             cols_planta = st.columns(5)
+            # CORREGIDO: Se añade el prefijo a cada clave (key)
             with cols_planta[0]:
-                etapa = st.selectbox("Etapa Fenológica", ETAPAS_FENOLOGICAS, key=f"etapa_{i}")
+                etapa = st.selectbox("Etapa Fenológica", ETAPAS_FENOLOGICAS, key=f"{key_prefix}_etapa_{i}")
             with cols_planta[1]:
-                altura = st.number_input("Altura (cm)", min_value=0.0, format="%.2f", key=f"altura_{i}")
+                altura = st.number_input("Altura (cm)", min_value=0.0, format="%.2f", key=f"{key_prefix}_altura_{i}")
             with cols_planta[2]:
-                brotes = st.number_input("N° Brotes", min_value=0, step=1, key=f"brotes_{i}")
+                brotes = st.number_input("N° Brotes", min_value=0, step=1, key=f"{key_prefix}_brotes_{i}")
             with cols_planta[3]:
-                yemas = st.number_input("N° Yemas", min_value=0, step=1, key=f"yemas_{i}")
+                yemas = st.number_input("N° Yemas", min_value=0, step=1, key=f"{key_prefix}_yemas_{i}")
             with cols_planta[4]:
-                productiva = st.checkbox("¿Productiva?", key=f"prod_{i}")
+                # Se añade un campo faltante en la base de datos: diametro_tallo_mm
+                diametro = st.number_input("Diámetro Tallo (mm)", min_value=0.0, format="%.2f", key=f"{key_prefix}_diametro_{i}")
             
             datos_plantas.append({
                 'Fecha': fecha_evaluacion.strftime("%Y-%m-%d"),
@@ -89,7 +93,8 @@ with st.expander("➕ Registrar Nueva Evaluación por Planta", expanded=True):
                 'Altura_Planta_cm': altura,
                 'Numero_Brotes': brotes,
                 'Numero_Yemas': yemas,
-                'Es_Productiva': productiva
+                'diametro_tallo_mm': diametro,
+                # 'Es_Productiva' no parece estar en tu BD, si lo necesitas, añade la columna en Supabase
             })
 
         submitted = st.form_submit_button("✅ Guardar Evaluación Completa")
@@ -102,10 +107,9 @@ with st.expander("➕ Registrar Nueva Evaluación por Planta", expanded=True):
                         if reg['Altura_Planta_cm'] > 0 or reg['Numero_Brotes'] > 0 or reg['Numero_Yemas'] > 0
                     ]
                     if registros_validos:
-                        supabase.table('Fenologia_Arandano').insert(registros_validos).execute()
+                        response = supabase.table('Fenologia_Arandano').insert(registros_validos).execute()
                         st.toast(f"✅ ¡Evaluación de {len(registros_validos)} plantas guardada exitosamente!", icon="🎉")
                         st.cache_data.clear()
-                        # No usamos st.rerun() para que el toast sea visible
                     else:
                         st.warning("No se ingresaron datos en ninguna planta.")
                 except Exception as e:
@@ -135,14 +139,12 @@ else:
         st.plotly_chart(fig_etapas, use_container_width=True)
     
     with col_g2:
-        # Gráfico de Plantas Productivas
-        df_productivas = df_ultima_eval['Es_Productiva'].value_counts().reset_index()
-        df_productivas.columns = ['Es_Productiva', 'Cantidad']
-        df_productivas['Es_Productiva'] = df_productivas['Es_Productiva'].map({True: 'Sí', False: 'No'})
-        fig_prod = px.bar(df_productivas, x='Es_Productiva', y='Cantidad', 
-                          title='Conteo de Plantas Productivas', text_auto=True,
-                          labels={'Es_Productiva': '¿Es Productiva?', 'Cantidad': 'Número de Plantas'})
-        st.plotly_chart(fig_prod, use_container_width=True)
+        # Gráfico de Diámetro Promedio por Hilera
+        df_diametro = df_ultima_eval.groupby('Hilera')['diametro_tallo_mm'].mean().reset_index()
+        fig_diam = px.bar(df_diametro, x='Hilera', y='diametro_tallo_mm', 
+                          title='Diámetro Promedio de Tallo por Hilera', text_auto='.2f',
+                          labels={'Hilera': 'Hilera', 'diametro_tallo_mm': 'Diámetro Promedio (mm)'})
+        st.plotly_chart(fig_diam, use_container_width=True)
 
     st.divider()
     st.subheader("📈 Análisis de Crecimiento a lo Largo del Tiempo")
