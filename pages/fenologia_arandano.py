@@ -52,27 +52,45 @@ def cargar_fenologia_supabase():
     return pd.DataFrame()
 
 # --- Interfaz de Registro ---
+
+# NUEVO: Manejo explícito del estado de la hilera seleccionada para evitar errores de renderizado.
+# Se inicializa el estado la primera vez que se ejecuta el script o si se refresca la página.
+if 'hilera_para_registrar' not in st.session_state:
+    st.session_state.hilera_para_registrar = list(HILERAS.keys())[0]
+
+# NUEVO: Función callback que se ejecuta cada vez que el selectbox cambia.
+# Actualiza el estado de la sesión con el nuevo valor del widget.
+def on_hilera_change():
+    st.session_state.hilera_para_registrar = st.session_state.widget_selectbox_hilera
+
 with st.expander("➕ Registrar Nueva Evaluación por Planta", expanded=True):
     with st.form("nueva_evaluacion_form"):
         st.subheader("1. Datos Generales de la Jornada")
         col1, col2 = st.columns(2)
         with col1:
-            hilera_seleccionada = st.selectbox('Seleccione la Hilera a Evaluar:', options=list(HILERAS.keys()))
+            # MODIFICADO: El selectbox ahora usa una clave única y llama a la función on_change
+            st.selectbox(
+                'Seleccione la Hilera a Evaluar:', 
+                options=list(HILERAS.keys()),
+                key='widget_selectbox_hilera', # Clave para referenciar el widget
+                on_change=on_hilera_change      # Función a ejecutar cuando cambia la selección
+            )
         with col2:
             fecha_evaluacion = st.date_input("Fecha de Evaluación", datetime.now())
+        
+        # MODIFICADO: Se lee el valor directamente del estado de la sesión, que es más confiable.
+        hilera_actual = st.session_state.hilera_para_registrar
+        num_plantas = HILERAS[hilera_actual]
+        st.subheader(f"2. Ingrese los datos para las {num_plantas} plantas de la '{hilera_actual}'")
 
-        num_plantas = HILERAS[hilera_seleccionada]
-        st.subheader(f"2. Ingrese los datos para las {num_plantas} plantas de la '{hilera_seleccionada}'")
-
-        # CORREGIDO: Se crea un prefijo único para las claves para evitar conflictos de estado
-        key_prefix = hilera_seleccionada.replace(" ", "_").replace("/", "_").replace("(", "").replace(")", "")
+        # Se usa el valor del estado de la sesión para las claves, asegurando consistencia.
+        key_prefix = hilera_actual.replace(" ", "_").replace("/", "_").replace("(", "").replace(")", "")
 
         # Crear una estructura para guardar los datos de cada planta
         datos_plantas = []
         for i in range(num_plantas):
             st.markdown(f"--- \n **Planta {i+1}**")
             cols_planta = st.columns(5)
-            # CORREGIDO: Se añade el prefijo a cada clave (key)
             with cols_planta[0]:
                 etapa = st.selectbox("Etapa Fenológica", ETAPAS_FENOLOGICAS, key=f"{key_prefix}_etapa_{i}")
             with cols_planta[1]:
@@ -82,26 +100,23 @@ with st.expander("➕ Registrar Nueva Evaluación por Planta", expanded=True):
             with cols_planta[3]:
                 yemas = st.number_input("N° Yemas", min_value=0, step=1, key=f"{key_prefix}_yemas_{i}")
             with cols_planta[4]:
-                # Se añade un campo faltante en la base de datos: diametro_tallo_mm
                 diametro = st.number_input("Diámetro Tallo (mm)", min_value=0.0, format="%.2f", key=f"{key_prefix}_diametro_{i}")
             
             datos_plantas.append({
                 'Fecha': fecha_evaluacion.strftime("%Y-%m-%d"),
-                'Hilera': hilera_seleccionada,
+                'Hilera': hilera_actual, # MODIFICADO: Se usa el valor del estado de la sesión
                 'Numero_de_Planta': i + 1,
                 'Etapa_Fenologica': etapa,
                 'Altura_Planta_cm': altura,
                 'Numero_Brotes': brotes,
                 'Numero_Yemas': yemas,
                 'diametro_tallo_mm': diametro,
-                # 'Es_Productiva' no parece estar en tu BD, si lo necesitas, añade la columna en Supabase
             })
 
         submitted = st.form_submit_button("✅ Guardar Evaluación Completa")
         if submitted:
             if supabase:
                 try:
-                    # Filtrar registros que no fueron llenados (donde todo es cero o por defecto)
                     registros_validos = [
                         reg for reg in datos_plantas 
                         if reg['Altura_Planta_cm'] > 0 or reg['Numero_Brotes'] > 0 or reg['Numero_Yemas'] > 0
@@ -140,11 +155,14 @@ else:
     
     with col_g2:
         # Gráfico de Diámetro Promedio por Hilera
-        df_diametro = df_ultima_eval.groupby('Hilera')['diametro_tallo_mm'].mean().reset_index()
-        fig_diam = px.bar(df_diametro, x='Hilera', y='diametro_tallo_mm', 
-                          title='Diámetro Promedio de Tallo por Hilera', text_auto='.2f',
-                          labels={'Hilera': 'Hilera', 'diametro_tallo_mm': 'Diámetro Promedio (mm)'})
-        st.plotly_chart(fig_diam, use_container_width=True)
+        if 'diametro_tallo_mm' in df_ultima_eval.columns:
+            df_diametro = df_ultima_eval.groupby('Hilera')['diametro_tallo_mm'].mean().reset_index()
+            fig_diam = px.bar(df_diametro, x='Hilera', y='diametro_tallo_mm', 
+                              title='Diámetro Promedio de Tallo por Hilera', text_auto='.2f',
+                              labels={'Hilera': 'Hilera', 'diametro_tallo_mm': 'Diámetro Promedio (mm)'})
+            st.plotly_chart(fig_diam, use_container_width=True)
+        else:
+            st.warning("La columna 'diametro_tallo_mm' no se encuentra para el análisis.")
 
     st.divider()
     st.subheader("📈 Análisis de Crecimiento a lo Largo del Tiempo")
@@ -160,3 +178,4 @@ else:
     # Historial Detallado
     with st.expander("Ver historial de datos detallado"):
         st.dataframe(df_historial, use_container_width=True)
+
