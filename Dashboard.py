@@ -24,7 +24,7 @@ def init_supabase_connection():
 
 supabase = init_supabase_connection()
 
-# --- FUNCIÓN DE CARGA DE DATOS DE TODOS LOS MÓDULOS ---
+# --- FUNCIÓN DE CARGA DE DATOS DE TODOS LOS MÓDulos ---
 @st.cache_data(ttl=300) # Cachear los datos por 5 minutos
 def cargar_todos_los_datos():
     if not supabase:
@@ -66,6 +66,16 @@ df_fenologia = procesar_fechas(df_fenologia, 'Fecha')
 df_fitosanidad = procesar_fechas(df_fitosanidad, 'Fecha')
 df_mosca = procesar_fechas(df_mosca, 'Fecha')
 df_fertirriego = procesar_fechas(df_fertirriego, 'Fecha')
+
+# --- CORRECCIÓN DEFINITIVA: Asegurar que el número de planta sea numérico ---
+# Esto garantiza que la ordenación para el gráfico de variabilidad sea correcta.
+if not df_fenologia.empty and 'Numero_de_Planta' in df_fenologia.columns:
+    # Convertir a numérico; los valores que no sean números se convertirán en NaN
+    df_fenologia['Numero_de_Planta'] = pd.to_numeric(df_fenologia['Numero_de_Planta'], errors='coerce')
+    # Eliminar cualquier fila donde la conversión haya fallado
+    df_fenologia.dropna(subset=['Numero_de_Planta'], inplace=True)
+    # Convertir la columna a tipo entero para quitar decimales
+    df_fenologia['Numero_de_Planta'] = df_fenologia['Numero_de_Planta'].astype(int)
 
 
 # --- KPIs: MÉTRICAS CLAVE DEL CULTIVO ---
@@ -188,8 +198,7 @@ with tab1:
                     if col_metrica not in df_visualizacion.columns:
                         st.error(f"La métrica '{metrica_display}' no se encuentra en los datos.")
                     else:
-                        # CORRECCIÓN: Ordenar los datos por el número de planta antes de graficar.
-                        # Esto asegura que la línea se dibuje de izquierda a derecha sin saltos.
+                        # La ordenación ahora funcionará correctamente gracias a la conversión de tipo de dato anterior.
                         df_visualizacion_sorted = df_visualizacion.sort_values(by=col_planta)
                         
                         fig = px.line(
