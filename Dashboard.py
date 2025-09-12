@@ -30,23 +30,18 @@ def cargar_todos_los_datos():
     if not supabase:
         return { "error": "No se pudo conectar a Supabase." }
     
+    # CORREGIDO: Se usa el nombre de tabla correcto 'Fenologia_Arandano'
     tablas = [
-        "Evaluaciones_Fenologicas", "Fitosanidad", "Mosca_Fruta_Monitoreo", "Riego_Registros"
+        "Fenologia_Arandano", "Fitosanidad", "Mosca_Fruta_Monitoreo", "Riego_Registros"
     ]
     dataframes = {}
     try:
         for tabla in tablas:
-            # MODIFICADO: Se ordena por 'Fecha_Evaluacion' o la fecha relevante si existe
-            # para asegurar que los últimos registros son los más recientes.
-            # Supabase podría no permitir ordenar por 'created_at' en todas las tablas si el campo no existe.
-            # Se usará 'Fecha' como un campo genérico, ajústalo si es necesario.
             response = supabase.table(tabla).select("*").order('id', desc=True).execute()
             dataframes[tabla] = pd.DataFrame(response.data)
         return dataframes
     except Exception as e:
-        # Se devuelve el error de forma segura para depuración
         st.error(f"Fallo al cargar la tabla '{tabla}': {e}")
-        # Se retorna un diccionario vacío para esa tabla para no detener la app
         dataframes[tabla] = pd.DataFrame()
         return dataframes
 
@@ -57,21 +52,20 @@ if "error" in datos:
     st.error(datos["error"])
     st.stop()
 
-# MODIFICADO: Se corrige el nombre de la tabla para que coincida con la carga.
-df_fenologia = datos.get("Evaluaciones_Fenologicas", pd.DataFrame())
+# CORREGIDO: Se usa el key correcto del diccionario 'Fenologia_Arandano'
+df_fenologia = datos.get("Fenologia_Arandano", pd.DataFrame())
 df_fitosanidad = datos.get("Fitosanidad", pd.DataFrame())
 df_mosca = datos.get("Mosca_Fruta_Monitoreo", pd.DataFrame())
 df_fertirriego = datos.get("Riego_Registros", pd.DataFrame())
 
 # --- PROCESAMIENTO DE DATOS (Limpieza y conversión de tipos) ---
-# Asegurar que las columnas de fecha existan y sean del tipo correcto
 def procesar_fechas(df, nombre_col_fecha):
     if not df.empty and nombre_col_fecha in df.columns:
         df[nombre_col_fecha] = pd.to_datetime(df[nombre_col_fecha], errors='coerce')
     return df
 
-# MODIFICADO: Se procesan las fechas para cada dataframe con su respectiva columna
-df_fenologia = procesar_fechas(df_fenologia, 'Fecha_Evaluacion')
+# CORREGIDO: Se usa el nombre de columna correcto 'Fecha' para fenología
+df_fenologia = procesar_fechas(df_fenologia, 'Fecha')
 df_fitosanidad = procesar_fechas(df_fitosanidad, 'Fecha')
 df_mosca = procesar_fechas(df_mosca, 'Fecha')
 df_fertirriego = procesar_fechas(df_fertirriego, 'Fecha')
@@ -83,8 +77,9 @@ st.header("Métricas Clave (Últimos Registros)")
 # Se asegura de ordenar por fecha si la columna existe antes de tomar el último registro
 if not df_fertirriego.empty and 'Fecha' in df_fertirriego.columns:
     df_fertirriego = df_fertirriego.sort_values('Fecha', ascending=False)
-if not df_fenologia.empty and 'Fecha_Evaluacion' in df_fenologia.columns:
-    df_fenologia = df_fenologia.sort_values('Fecha_Evaluacion', ascending=False)
+# CORREGIDO: Se ordena por la columna de fecha correcta 'Fecha'
+if not df_fenologia.empty and 'Fecha' in df_fenologia.columns:
+    df_fenologia = df_fenologia.sort_values('Fecha', ascending=False)
 if not df_fitosanidad.empty and 'Fecha' in df_fitosanidad.columns:
     df_fitosanidad = df_fitosanidad.sort_values('Fecha', ascending=False)
 if not df_mosca.empty and 'Fecha' in df_mosca.columns:
@@ -106,9 +101,9 @@ with kpi_cols[1]:
 with kpi_cols[2]:
     diametro_promedio = 0
     if not df_fenologia.empty:
-        # Se usa iloc[0] por si hay varias evaluaciones en la misma última fecha
-        ultima_eval_feno_fecha = df_fenologia['Fecha_Evaluacion'].max()
-        ultima_eval_feno = df_fenologia[df_fenologia['Fecha_Evaluacion'] == ultima_eval_feno_fecha]
+        # CORREGIDO: Se usa la columna de fecha correcta 'Fecha'
+        ultima_eval_feno_fecha = df_fenologia['Fecha'].max()
+        ultima_eval_feno = df_fenologia[df_fenologia['Fecha'] == ultima_eval_feno_fecha]
         diametro_promedio = ultima_eval_feno['diametro_tallo_mm'].mean()
     st.metric("🌱 Diámetro Prom. Tallo", f"{diametro_promedio:.2f} mm", help="Promedio del diámetro del tallo en la última evaluación fenológica.")
 
@@ -116,7 +111,6 @@ with kpi_cols[2]:
 with kpi_cols[3]:
     plantas_con_sintomas = 0
     if not df_fitosanidad.empty and 'Datos_Enfermedades' in df_fitosanidad.columns:
-        # Usamos el primer registro que ya está ordenado por fecha
         ultima_eval_fito = df_fitosanidad.iloc[0]
         if ultima_eval_fito['Datos_Enfermedades']:
             datos_enfermedades = pd.DataFrame(ultima_eval_fito['Datos_Enfermedades'])
@@ -138,10 +132,10 @@ with kpi_cols[4]:
 
 st.divider()
 
-# --- NUEVO: ESTRUCTURA DE PESTAÑAS PARA ORGANIZAR EL ANÁLISIS ---
+# --- ESTRUCTURA DE PESTAÑAS PARA ORGANIZAR EL ANÁLISIS ---
 tab1, tab2 = st.tabs(["📊 Análisis Fenológico por Hilera", "📈 Tendencias Generales"])
 
-# --- NUEVO: PESTAÑA 1 - WIDGET DE ANÁLISIS FENOLÓGICO DETALLADO ---
+# --- PESTAÑA 1 - WIDGET DE ANÁLISIS FENOLÓGICO DETALLADO ---
 with tab1:
     st.header("Análisis de Variabilidad Fenológica por Hilera")
     
@@ -152,21 +146,18 @@ with tab1:
         filter_cols = st.columns(3)
         
         with filter_cols[0]:
-            # Filtro 1: Seleccionar la Hilera
             hileras_unicas = sorted(df_fenologia['Hilera'].unique())
             hilera_seleccionada = st.selectbox("1. Seleccione la Hilera", hileras_unicas)
         
-        # Filtrar el dataframe por la hilera seleccionada para los siguientes filtros
         df_filtrado_hilera = df_fenologia[df_fenologia['Hilera'] == hilera_seleccionada]
         
         with filter_cols[1]:
-            # Filtro 2: Seleccionar la Fecha (dependiente de la hilera)
-            fechas_disponibles = sorted(df_filtrado_hilera['Fecha_Evaluacion'].dt.date.unique(), reverse=True)
+            # CORREGIDO: Se usa la columna de fecha correcta 'Fecha'
+            fechas_disponibles = sorted(df_filtrado_hilera['Fecha'].dt.date.unique(), reverse=True)
             fecha_seleccionada = st.selectbox("2. Seleccione la Fecha de Evaluación", fechas_disponibles)
 
         with filter_cols[2]:
-            # Filtro 3: Seleccionar la Métrica a visualizar
-            # IMPORTANTE: Asegúrate que estos nombres de columna existan en tu tabla 'Evaluaciones_Fenologicas'
+            # IMPORTANTE: Asegúrate que estos nombres de columna existan en tu tabla 'Fenologia_Arandano'
             metricas_disponibles = {
                 'Altura de Planta (cm)': 'Altura_Planta_cm',
                 'Número de Brotes': 'Numero_Brotes',
@@ -180,32 +171,33 @@ with tab1:
 
         # --- APLICAR FILTROS Y MOSTRAR DATOS ---
         
-        # Convertir la fecha seleccionada de nuevo a datetime para filtrar correctamente
-        fecha_seleccionada_dt = pd.to_datetime(fecha_seleccionada)
-        
-        df_final_filtrado = df_filtrado_hilera[df_filtrado_hilera['Fecha_Evaluacion'].dt.date == fecha_seleccionada]
+        # CORREGIDO: Se filtra usando la columna de fecha correcta 'Fecha'
+        df_final_filtrado = df_filtrado_hilera[df_filtrado_hilera['Fecha'].dt.date == fecha_seleccionada]
         
         col_tabla, col_grafico = st.columns(2)
 
         with col_tabla:
             st.subheader(f"Datos Registrados para la Hilera {hilera_seleccionada} el {fecha_seleccionada}")
-            # Ordenar por número de planta para que la tabla sea fácil de leer
-            df_display = df_final_filtrado.sort_values(by='Numero_Planta').reset_index(drop=True)
-            st.dataframe(df_display)
+            # CORREGIDO: Se ordena por la columna de planta correcta 'Numero_de_Planta'
+            if 'Numero_de_Planta' in df_final_filtrado.columns:
+                df_display = df_final_filtrado.sort_values(by='Numero_de_Planta').reset_index(drop=True)
+                st.dataframe(df_display)
+            else:
+                st.error("La columna 'Numero_de_Planta' no se encontró. No se puede mostrar la tabla.")
+
 
         with col_grafico:
             st.subheader(f"Variabilidad de '{metrica_display}'")
 
-            # Asegurarse de que la columna de la métrica y la planta existan
-            if metrica_seleccionada_col in df_final_filtrado.columns and 'Numero_Planta' in df_final_filtrado.columns:
-                 # Graficar la variabilidad dentro de la hilera
+            # CORREGIDO: Se usa el nombre de columna correcto 'Numero_de_Planta'
+            if metrica_seleccionada_col in df_final_filtrado.columns and 'Numero_de_Planta' in df_final_filtrado.columns:
                 fig_variabilidad = px.line(
-                    df_final_filtrado.sort_values(by='Numero_Planta'), 
-                    x='Numero_Planta', 
+                    df_final_filtrado.sort_values(by='Numero_de_Planta'), 
+                    x='Numero_de_Planta', 
                     y=metrica_seleccionada_col,
                     title=f"Tendencia de '{metrica_display}' en la Hilera {hilera_seleccionada}",
                     labels={
-                        "Numero_Planta": "Número de Planta en la Hilera",
+                        "Numero_de_Planta": "Número de Planta en la Hilera",
                         metrica_seleccionada_col: metrica_display
                     },
                     markers=True
@@ -213,10 +205,10 @@ with tab1:
                 fig_variabilidad.update_layout(xaxis_title="Número de Planta", yaxis_title=metrica_display)
                 st.plotly_chart(fig_variabilidad, use_container_width=True)
             else:
-                st.error(f"La métrica '{metrica_seleccionada_col}' o 'Numero_Planta' no se encontró en los datos. Revisa los nombres de las columnas.")
+                st.error(f"La métrica '{metrica_seleccionada_col}' o 'Numero_de_Planta' no se encontró en los datos. Revisa los nombres de las columnas.")
 
 
-# --- MODIFICADO: PESTAÑA 2 - GRÁFICOS DE TENDENCIAS GENERALES ---
+# --- PESTAÑA 2 - GRÁFICOS DE TENDENCIAS GENERALES ---
 with tab2:
     st.header("Análisis de Tendencias Generales del Fundo")
     gcol1, gcol2 = st.columns(2)
@@ -233,15 +225,15 @@ with tab2:
 
     with gcol2:
         st.subheader("🌱 Evolución del Crecimiento Vegetativo")
-        if not df_fenologia.empty and 'Fecha_Evaluacion' in df_fenologia.columns:
-            # MODIFICADO: Agrupando por 'Fecha_Evaluacion' y usando las columnas correctas
-            df_feno_agg = df_fenologia.groupby(df_fenologia['Fecha_Evaluacion'].dt.date).agg(
+        # CORREGIDO: Se usan los nombres de columna correctos 'Fecha' y 'Numero_Brotes'
+        if not df_fenologia.empty and 'Fecha' in df_fenologia.columns:
+            df_feno_agg = df_fenologia.groupby(df_fenologia['Fecha'].dt.date).agg(
                 diametro_promedio=('diametro_tallo_mm', 'mean'),
-                brotes_promedio=('Numero_Brotes', 'mean') # Asegúrate que 'Numero_Brotes' existe
-            ).reset_index().sort_values(by='Fecha_Evaluacion')
+                brotes_promedio=('Numero_Brotes', 'mean') # Asegúrate que 'Numero_Brotes' existe en la BD
+            ).reset_index().sort_values(by='Fecha')
             
-            fig_feno = px.line(df_feno_agg, x='Fecha_Evaluacion', y=['diametro_promedio', 'brotes_promedio'], title="Crecimiento Promedio de las Plantas",
-                               labels={"value": "Valor Promedio", "variable": "Métrica", "Fecha_Evaluacion": "Fecha"}, markers=True)
+            fig_feno = px.line(df_feno_agg, x='Fecha', y=['diametro_promedio', 'brotes_promedio'], title="Crecimiento Promedio de las Plantas",
+                               labels={"value": "Valor Promedio", "variable": "Métrica", "Fecha": "Fecha"}, markers=True)
             st.plotly_chart(fig_feno, use_container_width=True)
         else:
             st.info("No hay suficientes datos de fenología para mostrar un gráfico.")
@@ -265,3 +257,4 @@ with tab2:
             st.info("No hay capturas de mosca en los últimos 30 días.")
     else:
         st.info("Aún no hay registros de monitoreo de mosca.")
+
