@@ -53,40 +53,40 @@ def cargar_fenologia_supabase():
 
 # --- Interfaz de Registro ---
 
-# NUEVO: Manejo explícito del estado de la hilera seleccionada para evitar errores de renderizado.
-# Se inicializa el estado la primera vez que se ejecuta el script o si se refresca la página.
-if 'hilera_para_registrar' not in st.session_state:
-    st.session_state.hilera_para_registrar = list(HILERAS.keys())[0]
-
-# NUEVO: Función callback que se ejecuta cada vez que el selectbox cambia.
-# Actualiza el estado de la sesión con el nuevo valor del widget.
-def on_hilera_change():
-    st.session_state.hilera_para_registrar = st.session_state.widget_selectbox_hilera
-
 with st.expander("➕ Registrar Nueva Evaluación por Planta", expanded=True):
+    
+    # Se inicializa el estado la primera vez que se ejecuta el script.
+    if 'hilera_para_registrar' not in st.session_state:
+        st.session_state.hilera_para_registrar = list(HILERAS.keys())[0]
+
+    # Función callback que actualiza el estado de la sesión con el nuevo valor del widget.
+    def on_hilera_change():
+        st.session_state.hilera_para_registrar = st.session_state.widget_selectbox_hilera
+
+    st.subheader("1. Datos Generales de la Jornada")
+    col1, col2 = st.columns(2)
+    with col1:
+        # CORREGIDO: El selectbox ahora está FUERA del formulario.
+        # Esto permite que su callback on_change funcione correctamente sin causar un error.
+        st.selectbox(
+            'Seleccione la Hilera a Evaluar:', 
+            options=list(HILERAS.keys()),
+            key='widget_selectbox_hilera',
+            on_change=on_hilera_change
+        )
+    with col2:
+        fecha_evaluacion = st.date_input("Fecha de Evaluación", datetime.now())
+    
+    # Se lee el valor del estado de la sesión para construir el formulario dinámicamente.
+    hilera_actual = st.session_state.hilera_para_registrar
+    num_plantas = HILERAS[hilera_actual]
+    
     with st.form("nueva_evaluacion_form"):
-        st.subheader("1. Datos Generales de la Jornada")
-        col1, col2 = st.columns(2)
-        with col1:
-            # MODIFICADO: El selectbox ahora usa una clave única y llama a la función on_change
-            st.selectbox(
-                'Seleccione la Hilera a Evaluar:', 
-                options=list(HILERAS.keys()),
-                key='widget_selectbox_hilera', # Clave para referenciar el widget
-                on_change=on_hilera_change      # Función a ejecutar cuando cambia la selección
-            )
-        with col2:
-            fecha_evaluacion = st.date_input("Fecha de Evaluación", datetime.now())
-        
-        # MODIFICADO: Se lee el valor directamente del estado de la sesión, que es más confiable.
-        hilera_actual = st.session_state.hilera_para_registrar
-        num_plantas = HILERAS[hilera_actual]
+        # El subheader ahora está dentro del formulario, pero se basa en el estado ya definido.
         st.subheader(f"2. Ingrese los datos para las {num_plantas} plantas de la '{hilera_actual}'")
 
-        # Se usa el valor del estado de la sesión para las claves, asegurando consistencia.
         key_prefix = hilera_actual.replace(" ", "_").replace("/", "_").replace("(", "").replace(")", "")
 
-        # Crear una estructura para guardar los datos de cada planta
         datos_plantas = []
         for i in range(num_plantas):
             st.markdown(f"--- \n **Planta {i+1}**")
@@ -104,7 +104,7 @@ with st.expander("➕ Registrar Nueva Evaluación por Planta", expanded=True):
             
             datos_plantas.append({
                 'Fecha': fecha_evaluacion.strftime("%Y-%m-%d"),
-                'Hilera': hilera_actual, # MODIFICADO: Se usa el valor del estado de la sesión
+                'Hilera': hilera_actual,
                 'Numero_de_Planta': i + 1,
                 'Etapa_Fenologica': etapa,
                 'Altura_Planta_cm': altura,
@@ -113,6 +113,7 @@ with st.expander("➕ Registrar Nueva Evaluación por Planta", expanded=True):
                 'diametro_tallo_mm': diametro,
             })
 
+        # El botón de envío debe estar dentro del formulario.
         submitted = st.form_submit_button("✅ Guardar Evaluación Completa")
         if submitted:
             if supabase:
