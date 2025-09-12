@@ -30,7 +30,6 @@ def cargar_todos_los_datos():
     if not supabase:
         return { "error": "No se pudo conectar a Supabase." }
     
-    # CORREGIDO: Se usa el nombre de tabla correcto 'Fenologia_Arandano'
     tablas = [
         "Fenologia_Arandano", "Fitosanidad", "Mosca_Fruta_Monitoreo", "Riego_Registros"
     ]
@@ -52,7 +51,6 @@ if "error" in datos:
     st.error(datos["error"])
     st.stop()
 
-# CORREGIDO: Se usa el key correcto del diccionario 'Fenologia_Arandano'
 df_fenologia = datos.get("Fenologia_Arandano", pd.DataFrame())
 df_fitosanidad = datos.get("Fitosanidad", pd.DataFrame())
 df_mosca = datos.get("Mosca_Fruta_Monitoreo", pd.DataFrame())
@@ -64,7 +62,6 @@ def procesar_fechas(df, nombre_col_fecha):
         df[nombre_col_fecha] = pd.to_datetime(df[nombre_col_fecha], errors='coerce')
     return df
 
-# CORREGIDO: Se usa el nombre de columna correcto 'Fecha' para fenología
 df_fenologia = procesar_fechas(df_fenologia, 'Fecha')
 df_fitosanidad = procesar_fechas(df_fitosanidad, 'Fecha')
 df_mosca = procesar_fechas(df_mosca, 'Fecha')
@@ -74,10 +71,8 @@ df_fertirriego = procesar_fechas(df_fertirriego, 'Fecha')
 # --- KPIs: MÉTRICAS CLAVE DEL CULTIVO ---
 st.header("Métricas Clave (Últimos Registros)")
 
-# Se asegura de ordenar por fecha si la columna existe antes de tomar el último registro
 if not df_fertirriego.empty and 'Fecha' in df_fertirriego.columns:
     df_fertirriego = df_fertirriego.sort_values('Fecha', ascending=False)
-# CORREGIDO: Se ordena por la columna de fecha correcta 'Fecha'
 if not df_fenologia.empty and 'Fecha' in df_fenologia.columns:
     df_fenologia = df_fenologia.sort_values('Fecha', ascending=False)
 if not df_fitosanidad.empty and 'Fecha' in df_fitosanidad.columns:
@@ -101,7 +96,6 @@ with kpi_cols[1]:
 with kpi_cols[2]:
     diametro_promedio = 0
     if not df_fenologia.empty:
-        # CORREGIDO: Se usa la columna de fecha correcta 'Fecha'
         ultima_eval_feno_fecha = df_fenologia['Fecha'].max()
         ultima_eval_feno = df_fenologia[df_fenologia['Fecha'] == ultima_eval_feno_fecha]
         diametro_promedio = ultima_eval_feno['diametro_tallo_mm'].mean()
@@ -142,7 +136,15 @@ with tab1:
     if df_fenologia.empty:
         st.warning("No hay datos de evaluaciones fenológicas para analizar.")
     else:
-        # --- FILTROS INTERACTIVOS ---
+        with st.expander("🔍 Verificación de Datos Crudos"):
+            st.write("Conteo de plantas únicas registradas por cada evaluación:")
+            if 'Numero_de_Planta' in df_fenologia.columns:
+                df_conteo = df_fenologia.groupby([df_fenologia['Fecha'].dt.date, 'Hilera'])['Numero_de_Planta'].nunique().reset_index()
+                df_conteo = df_conteo.rename(columns={'Fecha': 'Fecha de Evaluación', 'Numero_de_Planta': 'N° de Plantas Registradas'})
+                st.dataframe(df_conteo, use_container_width=True)
+            else:
+                st.warning("No se encontró la columna 'Numero_de_Planta' para generar el resumen.")
+
         filter_cols = st.columns(3)
         
         with filter_cols[0]:
@@ -152,12 +154,14 @@ with tab1:
         df_filtrado_hilera = df_fenologia[df_fenologia['Hilera'] == hilera_seleccionada]
         
         with filter_cols[1]:
-            # CORREGIDO: Se usa la columna de fecha correcta 'Fecha'
             fechas_disponibles = sorted(df_filtrado_hilera['Fecha'].dt.date.unique(), reverse=True)
-            fecha_seleccionada = st.selectbox("2. Seleccione la Fecha de Evaluación", fechas_disponibles)
+            if fechas_disponibles:
+                fecha_seleccionada = st.selectbox("2. Seleccione la Fecha de Evaluación", fechas_disponibles)
+            else:
+                st.warning("No hay fechas de evaluación para la hilera seleccionada.")
+                fecha_seleccionada = None
 
         with filter_cols[2]:
-            # IMPORTANTE: Asegúrate que estos nombres de columna existan en tu tabla 'Fenologia_Arandano'
             metricas_disponibles = {
                 'Altura de Planta (cm)': 'Altura_Planta_cm',
                 'Número de Brotes': 'Numero_Brotes',
@@ -165,82 +169,73 @@ with tab1:
                 'Diámetro de Tallo (mm)': 'diametro_tallo_mm'
             }
             metrica_display = st.selectbox("3. Seleccione la Métrica a Graficar", options=list(metricas_disponibles.keys()))
-            metrica_seleccionada_col = metricas_disponibles[metrica_display]
+            col_metrica = metricas_disponibles[metrica_display]
 
         st.divider()
 
-        # --- APLICAR FILTROS Y MOSTRAR DATOS ---
-        
-        # CORREGIDO: Se filtra usando la columna de fecha correcta 'Fecha'
-        df_final_filtrado = df_filtrado_hilera[df_filtrado_hilera['Fecha'].dt.date == fecha_seleccionada]
-        
-        col_tabla, col_grafico = st.columns(2)
+        if fecha_seleccionada:
+            df_visualizacion = df_filtrado_hilera[df_filtrado_hilera['Fecha'].dt.date == fecha_seleccionada]
+            col_planta = 'Numero_de_Planta'
 
-        with col_tabla:
-            st.subheader(f"Datos Registrados para la Hilera {hilera_seleccionada} el {fecha_seleccionada}")
-            # CORREGIDO: Se ordena por la columna de planta correcta 'Numero_de_Planta'
-            if 'Numero_de_Planta' in df_final_filtrado.columns:
-                df_display = df_final_filtrado.sort_values(by='Numero_de_Planta').reset_index(drop=True)
-                st.dataframe(df_display)
+            if not df_visualizacion.empty:
+                table_col, chart_col = st.columns([0.4, 0.6])
+                
+                with table_col:
+                    st.write(f"Datos para el {fecha_seleccionada.strftime('%d/%m/%Y')}")
+                    st.dataframe(df_visualizacion[[col_planta, col_metrica]].sort_values(by=col_planta), use_container_width=True)
+                
+                with chart_col:
+                    if col_metrica not in df_visualizacion.columns:
+                        st.error(f"La métrica '{metrica_display}' no se encuentra en los datos.")
+                    else:
+                        # CORRECCIÓN: Ordenar los datos por el número de planta antes de graficar.
+                        # Esto asegura que la línea se dibuje de izquierda a derecha sin saltos.
+                        df_visualizacion_sorted = df_visualizacion.sort_values(by=col_planta)
+                        
+                        fig = px.line(
+                            df_visualizacion_sorted,
+                            x=col_planta,
+                            y=col_metrica,
+                            title=f"Tendencia de '{metrica_display}' en la {hilera_seleccionada}",
+                            markers=True,
+                            labels={col_planta: "Número de Planta", col_metrica: metrica_display}
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
             else:
-                st.error("La columna 'Numero_de_Planta' no se encontró. No se puede mostrar la tabla.")
-
-
-        with col_grafico:
-            st.subheader(f"Variabilidad de '{metrica_display}'")
-
-            # CORREGIDO: Se usa el nombre de columna correcto 'Numero_de_Planta'
-            if metrica_seleccionada_col in df_final_filtrado.columns and 'Numero_de_Planta' in df_final_filtrado.columns:
-                fig_variabilidad = px.line(
-                    df_final_filtrado.sort_values(by='Numero_de_Planta'), 
-                    x='Numero_de_Planta', 
-                    y=metrica_seleccionada_col,
-                    title=f"Tendencia de '{metrica_display}' en la Hilera {hilera_seleccionada}",
-                    labels={
-                        "Numero_de_Planta": "Número de Planta en la Hilera",
-                        metrica_seleccionada_col: metrica_display
-                    },
-                    markers=True
-                )
-                fig_variabilidad.update_layout(xaxis_title="Número de Planta", yaxis_title=metrica_display)
-                st.plotly_chart(fig_variabilidad, use_container_width=True)
-            else:
-                st.error(f"La métrica '{metrica_seleccionada_col}' o 'Numero_de_Planta' no se encontró en los datos. Revisa los nombres de las columnas.")
-
+                st.info("No hay datos para la fecha seleccionada.")
 
 # --- PESTAÑA 2 - GRÁFICOS DE TENDENCIAS GENERALES ---
 with tab2:
-    st.header("Análisis de Tendencias Generales del Fundo")
+    st.header("Análisis de Tendencias Generales")
     gcol1, gcol2 = st.columns(2)
 
     with gcol1:
         st.subheader("📈 Evolución de Calidad del Fertirriego")
-        if not df_fertirriego.empty and 'Fecha' in df_fertirriego.columns:
+        if not df_fertirriego.empty:
             df_fert_sorted = df_fertirriego.sort_values(by='Fecha')
             fig_fert = px.line(df_fert_sorted, x='Fecha', y=['pH_final', 'CE_final'], title="Tendencia de pH y CE",
                                labels={"value": "Valor Medido", "variable": "Parámetro"}, markers=True)
             st.plotly_chart(fig_fert, use_container_width=True)
         else:
-            st.info("No hay suficientes datos de fertirriego para mostrar un gráfico.")
+            st.info("No hay datos de fertirriego para mostrar un gráfico.")
 
     with gcol2:
         st.subheader("🌱 Evolución del Crecimiento Vegetativo")
-        # CORREGIDO: Se usan los nombres de columna correctos 'Fecha' y 'Numero_Brotes'
-        if not df_fenologia.empty and 'Fecha' in df_fenologia.columns:
+        if not df_fenologia.empty:
             df_feno_agg = df_fenologia.groupby(df_fenologia['Fecha'].dt.date).agg(
                 diametro_promedio=('diametro_tallo_mm', 'mean'),
-                brotes_promedio=('Numero_Brotes', 'mean') # Asegúrate que 'Numero_Brotes' existe en la BD
+                brotes_promedio=('Numero_Brotes', 'mean')
             ).reset_index().sort_values(by='Fecha')
             
             fig_feno = px.line(df_feno_agg, x='Fecha', y=['diametro_promedio', 'brotes_promedio'], title="Crecimiento Promedio de las Plantas",
-                               labels={"value": "Valor Promedio", "variable": "Métrica", "Fecha": "Fecha"}, markers=True)
+                               labels={"value": "Valor Promedio", "variable": "Métrica"}, markers=True)
             st.plotly_chart(fig_feno, use_container_width=True)
         else:
-            st.info("No hay suficientes datos de fenología para mostrar un gráfico.")
+            st.info("No hay datos de fenología para mostrar un gráfico.")
 
     st.divider()
     st.subheader("🪰 Capturas de Mosca de la Fruta (Últimos 30 días)")
-    if not df_mosca.empty and 'Fecha' in df_mosca.columns:
+    if not df_mosca.empty:
         df_mosca_mes = df_mosca[df_mosca['Fecha'] >= (datetime.now() - timedelta(days=30))]
         if not df_mosca_mes.empty:
             df_mosca_agg = df_mosca_mes.groupby(pd.Grouper(key='Fecha', freq='W-MON')).agg({
