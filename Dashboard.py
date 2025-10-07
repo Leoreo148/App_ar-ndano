@@ -208,15 +208,6 @@ with tab1:
             else:
                 st.info("No hay datos para la fecha seleccionada.")
 
-Tienes toda la razón, mis disculpas. Entendido, quitamos el gráfico de fertirriego de esta pestaña para trabajarlo por separado después.
-
-El objetivo es que en "Tendencias Generales" queden únicamente los gráficos de fenología y el de mosca de la fruta.
-
-Aquí está la sección de código corregida para la Pestaña 2. Simplemente reemplaza el bloque with tab2: completo en tu archivo con este nuevo bloque.
-
-Código Corregido para la Pestaña 2
-Python
-
 # --- PESTAÑA 2 - GRÁFICOS DE TENDENCIAS GENERALES ---
 with tab2:
     st.header("Análisis de Tendencias Generales")
