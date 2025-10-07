@@ -262,7 +262,6 @@ with tab2:
         else:
             st.info("No hay fechas disponibles en el historial de riego.")
 
-
 # --- PESTAÑA 3 - GRÁFICOS DE TENDENCIAS GENERALES ---
 with tab2:
     st.header("Análisis de Tendencias Generales")
