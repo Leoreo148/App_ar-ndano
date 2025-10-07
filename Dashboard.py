@@ -73,33 +73,34 @@ if not df_fenologia.empty and 'Numero_de_Planta' in df_fenologia.columns:
     df_fenologia.dropna(subset=['Numero_de_Planta'], inplace=True)
     df_fenologia['Numero_de_Planta'] = df_fenologia['Numero_de_Planta'].astype(int)
 
-
 # --- KPIs: MÉTRICAS CLAVE DEL CULTIVO ---
 st.header("Métricas Clave (Últimos Registros)")
 
-if not df_fertirriego.empty and 'Fecha' in df_fertirriego.columns:
-    df_fertirriego = df_fertirriego.sort_values('Fecha', ascending=False)
-if not df_fenologia.empty and 'Fecha' in df_fenologia.columns:
-    df_fenologia = df_fenologia.sort_values('Fecha', ascending=False)
-if not df_fitosanidad.empty and 'Fecha' in df_fitosanidad.columns:
-    df_fitosanidad = df_fitosanidad.sort_values('Fecha', ascending=False)
-if not df_mosca.empty and 'Fecha' in df_mosca.columns:
-    df_mosca = df_mosca.sort_values('Fecha', ascending=False)
-    
-kpi_cols = st.columns(5)
+# Ordenar dataframes para asegurar que el último registro es el primero
+if not df_fertirriego.empty: df_fertirriego = df_fertirriego.sort_values('Fecha', ascending=False)
+if not df_fenologia.empty: df_fenologia = df_fenologia.sort_values('Fecha', ascending=False)
+if not df_fitosanidad.empty: df_fitosanidad = df_fitosanidad.sort_values('Fecha', ascending=False)
+if not df_mosca.empty: df_mosca = df_mosca.sort_values('Fecha', ascending=False)
 
-# KPI 1: pH del último fertirriego
+kpi_cols = st.columns(6)
+
+# KPI 1: Humedad del Sustrato (NUEVO)
 with kpi_cols[0]:
-    ph_ultimo = df_fertirriego['pH_final'].iloc[0] if not df_fertirriego.empty else 0
-    st.metric("💧 pH Último Fertirriego", f"{ph_ultimo:.2f}", help="El pH de la solución nutritiva es crítico para la absorción de nutrientes. Rango ideal: 4.5 - 5.5")
+    humedad_ultima = df_fertirriego['humedad_promedio_medida'].iloc[0] if not df_fertirriego.empty and 'humedad_promedio_medida' in df_fertirriego.columns else 0
+    st.metric("💧 Humedad Últ. Medición", f"{humedad_ultima:.1f}%", help="Promedio de la última medición de humedad del sustrato. Es el indicador clave para la decisión de riego.")
 
-# KPI 2: CE del último fertirriego
+# KPI 2: pH del último fertirriego
 with kpi_cols[1]:
-    ce_ultima = df_fertirriego['CE_final'].iloc[0] if not df_fertirriego.empty else 0
-    st.metric("⚡ CE Último Fertirriego", f"{ce_ultima:.2f} dS/m", help="La Conductividad Eléctrica mide la salinidad. Ideal < 1.0 dS/m.")
+    ph_ultimo = df_fertirriego['pH_final'].iloc[0] if not df_fertirriego.empty and 'pH_final' in df_fertirriego.columns else 0
+    st.metric("💧 pH Último Riego", f"{ph_ultimo:.2f}", help="El pH de la solución nutritiva es crítico para la absorción de nutrientes. Rango ideal: 4.5 - 5.5")
 
-# KPI 3: Crecimiento Vegetativo (Diámetro del Tallo)
+# KPI 3: CE del último fertirriego
 with kpi_cols[2]:
+    ce_ultima = df_fertirriego['CE_final'].iloc[0] if not df_fertirriego.empty and 'CE_final' in df_fertirriego.columns else 0
+    st.metric("⚡ CE Último Riego", f"{ce_ultima:.2f} dS/m", help="La Conductividad Eléctrica mide la salinidad. Ideal < 1.0 dS/m.")
+
+# KPI 4: Crecimiento Vegetativo (Diámetro del Tallo)
+with kpi_cols[3]:
     diametro_promedio = 0
     if not df_fenologia.empty:
         ultima_eval_feno_fecha = df_fenologia['Fecha'].max()
@@ -107,8 +108,8 @@ with kpi_cols[2]:
         diametro_promedio = ultima_eval_feno['diametro_tallo_mm'].mean()
     st.metric("🌱 Diámetro Prom. Tallo", f"{diametro_promedio:.2f} mm", help="Promedio del diámetro del tallo en la última evaluación fenológica.")
 
-# KPI 4: Alerta Sanitaria
-with kpi_cols[3]:
+# KPI 5: Alerta Sanitaria
+with kpi_cols[4]:
     plantas_con_sintomas = 0
     if not df_fitosanidad.empty and 'Datos_Enfermedades' in df_fitosanidad.columns:
         ultima_eval_fito = df_fitosanidad.iloc[0]
@@ -119,8 +120,8 @@ with kpi_cols[3]:
                 plantas_con_sintomas = datos_enfermedades[cols_sintomas].sum(axis=1).gt(0).sum()
     st.metric("🔬 Plantas con Síntomas", f"{plantas_con_sintomas}", help="Número de plantas con alguna enfermedad registrada en la última evaluación.")
 
-# KPI 5: Alerta Mosca de la Fruta
-with kpi_cols[4]:
+# KPI 6: Alerta Mosca de la Fruta
+with kpi_cols[5]:
     mtd_promedio = 0
     if not df_mosca.empty:
         df_mosca_semana = df_mosca[df_mosca['Fecha'] >= (datetime.now() - timedelta(days=7))]
@@ -133,7 +134,7 @@ with kpi_cols[4]:
 st.divider()
 
 # --- ESTRUCTURA DE PESTAÑAS PARA ORGANIZAR EL ANÁLISIS ---
-tab1, tab2 = st.tabs(["📊 Análisis Fenológico por Hilera", "📈 Tendencias Generales"])
+tab1, tab2, tab3 = st.tabs(["📊 Análisis Fenológico por Hilera", "💧 Análisis de Riego y Humedad", "📈 Tendencias Generales"])
 
 # --- PESTAÑA 1 - WIDGET DE ANÁLISIS FENOLÓGICO DETALLADO ---
 with tab1:
