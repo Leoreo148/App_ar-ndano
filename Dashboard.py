@@ -264,7 +264,7 @@ with tab2:
             st.info("No hay fechas disponibles en el historial de riego.")
 
 # --- PESTAÑA 3 - GRÁFICOS DE TENDENCIAS GENERALES ---
-with tab2:
+with tab3:
     st.header("Análisis de Tendencias Generales")
     
     # --- MODIFICACIÓN: Se elimina la primera columna (gcol1) que contenía el gráfico de fertirriego ---
