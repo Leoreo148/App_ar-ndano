@@ -68,13 +68,9 @@ df_mosca = procesar_fechas(df_mosca, 'Fecha')
 df_fertirriego = procesar_fechas(df_fertirriego, 'Fecha')
 
 # --- CORRECCIÓN DEFINITIVA: Asegurar que el número de planta sea numérico ---
-# Esto garantiza que la ordenación para el gráfico de variabilidad sea correcta.
 if not df_fenologia.empty and 'Numero_de_Planta' in df_fenologia.columns:
-    # Convertir a numérico; los valores que no sean números se convertirán en NaN
     df_fenologia['Numero_de_Planta'] = pd.to_numeric(df_fenologia['Numero_de_Planta'], errors='coerce')
-    # Eliminar cualquier fila donde la conversión haya fallado
     df_fenologia.dropna(subset=['Numero_de_Planta'], inplace=True)
-    # Convertir la columna a tipo entero para quitar decimales
     df_fenologia['Numero_de_Planta'] = df_fenologia['Numero_de_Planta'].astype(int)
 
 
@@ -198,7 +194,6 @@ with tab1:
                     if col_metrica not in df_visualizacion.columns:
                         st.error(f"La métrica '{metrica_display}' no se encuentra en los datos.")
                     else:
-                        # La ordenación ahora funcionará correctamente gracias a la conversión de tipo de dato anterior.
                         df_visualizacion_sorted = df_visualizacion.sort_values(by=col_planta)
                         
                         fig = px.line(
@@ -223,22 +218,35 @@ with tab2:
         if not df_fertirriego.empty:
             df_fert_sorted = df_fertirriego.sort_values(by='Fecha')
             fig_fert = px.line(df_fert_sorted, x='Fecha', y=['pH_final', 'CE_final'], title="Tendencia de pH y CE",
-                               labels={"value": "Valor Medido", "variable": "Parámetro"}, markers=True)
+                                labels={"value": "Valor Medido", "variable": "Parámetro"}, markers=True)
             st.plotly_chart(fig_fert, use_container_width=True)
         else:
             st.info("No hay datos de fertirriego para mostrar un gráfico.")
 
     with gcol2:
-        st.subheader("🌱 Evolución del Crecimiento Vegetativo")
+        st.subheader("🌱 Evolución Fenológica")
         if not df_fenologia.empty:
+            # --- INICIO DE LA MODIFICACIÓN ---
+            # 1. Agregamos todas las métricas que necesitamos calcular
             df_feno_agg = df_fenologia.groupby(df_fenologia['Fecha'].dt.date).agg(
                 diametro_promedio=('diametro_tallo_mm', 'mean'),
-                brotes_promedio=('Numero_Brotes', 'mean')
+                altura_promedio=('Altura_Planta_cm', 'mean'),
+                brotes_promedio=('Numero_Brotes', 'mean'),
+                yemas_promedio=('Numero_Yemas', 'mean')
             ).reset_index().sort_values(by='Fecha')
             
-            fig_feno = px.line(df_feno_agg, x='Fecha', y=['diametro_promedio', 'brotes_promedio'], title="Crecimiento Promedio de las Plantas",
-                               labels={"value": "Valor Promedio", "variable": "Métrica"}, markers=True)
-            st.plotly_chart(fig_feno, use_container_width=True)
+            # 2. Creamos el primer gráfico para Crecimiento (Tallo y Altura)
+            fig_crecimiento = px.line(df_feno_agg, x='Fecha', y=['diametro_promedio', 'altura_promedio'], 
+                                    title="Crecimiento Promedio (Tallo y Altura)",
+                                    labels={"value": "Valor Promedio", "variable": "Métrica"}, markers=True)
+            st.plotly_chart(fig_crecimiento, use_container_width=True)
+            
+            # 3. Creamos el segundo gráfico para Desarrollo (Brotes y Yemas)
+            fig_desarrollo = px.line(df_feno_agg, x='Fecha', y=['brotes_promedio', 'yemas_promedio'], 
+                                   title="Desarrollo Promedio (Brotes y Yemas)",
+                                   labels={"value": "Valor Promedio", "variable": "Métrica"}, markers=True)
+            st.plotly_chart(fig_desarrollo, use_container_width=True)
+            # --- FIN DE LA MODIFICACIÓN ---
         else:
             st.info("No hay datos de fenología para mostrar un gráfico.")
 
@@ -255,10 +263,9 @@ with tab2:
             df_mosca_melt = df_mosca_agg.melt(id_vars='Fecha', var_name='Especie', value_name='Capturas')
             
             fig_mosca = px.bar(df_mosca_melt, x='Fecha', y='Capturas', color='Especie', title="Total de Capturas Semanales por Especie",
-                               labels={"Fecha": "Semana de"})
+                                labels={"Fecha": "Semana de"})
             st.plotly_chart(fig_mosca, use_container_width=True)
         else:
             st.info("No hay capturas de mosca en los últimos 30 días.")
     else:
         st.info("Aún no hay registros de monitoreo de mosca.")
-
