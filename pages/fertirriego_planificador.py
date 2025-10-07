@@ -165,7 +165,7 @@ if st.session_state.recommendation_generated:
                     st.balloons()
                     # Limpiar estado para la próxima evaluación
                     st.session_state.recommendation_generated = False
-                    st.experimental_rerun()
+                    st.rerun()
                 except Exception as e:
                     st.error(f"Error al guardar en Supabase: {e}")
 
