@@ -208,49 +208,46 @@ with tab1:
             else:
                 st.info("No hay datos para la fecha seleccionada.")
 
+Tienes toda la razón, mis disculpas. Entendido, quitamos el gráfico de fertirriego de esta pestaña para trabajarlo por separado después.
+
+El objetivo es que en "Tendencias Generales" queden únicamente los gráficos de fenología y el de mosca de la fruta.
+
+Aquí está la sección de código corregida para la Pestaña 2. Simplemente reemplaza el bloque with tab2: completo en tu archivo con este nuevo bloque.
+
+Código Corregido para la Pestaña 2
+Python
+
 # --- PESTAÑA 2 - GRÁFICOS DE TENDENCIAS GENERALES ---
 with tab2:
     st.header("Análisis de Tendencias Generales")
-    gcol1, gcol2 = st.columns(2)
-
-    with gcol1:
-        st.subheader("📈 Evolución de Calidad del Fertirriego")
-        if not df_fertirriego.empty:
-            df_fert_sorted = df_fertirriego.sort_values(by='Fecha')
-            fig_fert = px.line(df_fert_sorted, x='Fecha', y=['pH_final', 'CE_final'], title="Tendencia de pH y CE",
-                                labels={"value": "Valor Medido", "variable": "Parámetro"}, markers=True)
-            st.plotly_chart(fig_fert, use_container_width=True)
-        else:
-            st.info("No hay datos de fertirriego para mostrar un gráfico.")
-
-    with gcol2:
-        st.subheader("🌱 Evolución Fenológica")
-        if not df_fenologia.empty:
-            # --- INICIO DE LA MODIFICACIÓN ---
-            # 1. Agregamos todas las métricas que necesitamos calcular
-            df_feno_agg = df_fenologia.groupby(df_fenologia['Fecha'].dt.date).agg(
-                diametro_promedio=('diametro_tallo_mm', 'mean'),
-                altura_promedio=('Altura_Planta_cm', 'mean'),
-                brotes_promedio=('Numero_Brotes', 'mean'),
-                yemas_promedio=('Numero_Yemas', 'mean')
-            ).reset_index().sort_values(by='Fecha')
-            
-            # 2. Creamos el primer gráfico para Crecimiento (Tallo y Altura)
-            fig_crecimiento = px.line(df_feno_agg, x='Fecha', y=['diametro_promedio', 'altura_promedio'], 
-                                    title="Crecimiento Promedio (Tallo y Altura)",
-                                    labels={"value": "Valor Promedio", "variable": "Métrica"}, markers=True)
-            st.plotly_chart(fig_crecimiento, use_container_width=True)
-            
-            # 3. Creamos el segundo gráfico para Desarrollo (Brotes y Yemas)
-            fig_desarrollo = px.line(df_feno_agg, x='Fecha', y=['brotes_promedio', 'yemas_promedio'], 
-                                   title="Desarrollo Promedio (Brotes y Yemas)",
-                                   labels={"value": "Valor Promedio", "variable": "Métrica"}, markers=True)
-            st.plotly_chart(fig_desarrollo, use_container_width=True)
-            # --- FIN DE LA MODIFICACIÓN ---
-        else:
-            st.info("No hay datos de fenología para mostrar un gráfico.")
+    
+    # --- MODIFICACIÓN: Se elimina la primera columna (gcol1) que contenía el gráfico de fertirriego ---
+    st.subheader("🌱 Evolución Fenológica")
+    if not df_fenologia.empty:
+        # Agregamos todas las métricas que necesitamos calcular
+        df_feno_agg = df_fenologia.groupby(df_fenologia['Fecha'].dt.date).agg(
+            diametro_promedio=('diametro_tallo_mm', 'mean'),
+            altura_promedio=('Altura_Planta_cm', 'mean'),
+            brotes_promedio=('Numero_Brotes', 'mean'),
+            yemas_promedio=('Numero_Yemas', 'mean')
+        ).reset_index().sort_values(by='Fecha')
+        
+        # Creamos el primer gráfico para Crecimiento (Tallo y Altura)
+        fig_crecimiento = px.line(df_feno_agg, x='Fecha', y=['diametro_promedio', 'altura_promedio'], 
+                                title="Crecimiento Promedio (Tallo y Altura)",
+                                labels={"value": "Valor Promedio", "variable": "Métrica"}, markers=True)
+        st.plotly_chart(fig_crecimiento, use_container_width=True)
+        
+        # Creamos el segundo gráfico para Desarrollo (Brotes y Yemas)
+        fig_desarrollo = px.line(df_feno_agg, x='Fecha', y=['brotes_promedio', 'yemas_promedio'], 
+                               title="Desarrollo Promedio (Brotes y Yemas)",
+                               labels={"value": "Valor Promedio", "variable": "Métrica"}, markers=True)
+        st.plotly_chart(fig_desarrollo, use_container_width=True)
+    else:
+        st.info("No hay datos de fenología para mostrar un gráfico.")
 
     st.divider()
+
     st.subheader("🪰 Capturas de Mosca de la Fruta (Últimos 30 días)")
     if not df_mosca.empty:
         df_mosca_mes = df_mosca[df_mosca['Fecha'] >= (datetime.now() - timedelta(days=30))]
