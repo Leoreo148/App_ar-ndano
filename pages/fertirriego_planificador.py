@@ -1,6 +1,7 @@
 import streamlit as st
 from datetime import datetime
 import numpy as np
+import re # Importar la librería para expresiones regulares
 
 # --- LIBRERÍAS PARA LA CONEXIÓN A SUPABASE ---
 from supabase import create_client
@@ -61,9 +62,10 @@ st.info(f"Tarea programada para hoy según cronograma: **{tarea_de_hoy}**")
 with st.form("evaluacion_humedad_form"):
     eval_col1, eval_col2 = st.columns(2)
     with eval_col1:
+        # CORRECCIÓN: Nombres de hileras consistentes para evitar errores
         sectores_del_fundo = [
             'Hilera 1 (21 Emerald)',
-            'Hilera 2 (Coco y Cascarilla)',
+            'Hilera 2 (23 Coco y Cascarilla)',
             'Hilera 3 (22 Biloxi)'
         ]
         sector_seleccionado = st.selectbox("Seleccione la Hilera a Evaluar:", options=sectores_del_fundo, key="sector")
@@ -90,7 +92,14 @@ with st.form("evaluacion_humedad_form"):
             
             config = SUSTRATO_CONFIG[sustrato_seleccionado]
             umbral = config["umbral_humedad"]
-            num_plantas = int(sector_seleccionado.split('(')[1].split(' ')[0])
+            
+            # --- INICIO DE LA CORRECCIÓN DEL BUG ---
+            # Lógica robusta para obtener el número de plantas
+            num_plantas = 20 # Valor por defecto
+            match = re.search(r'\((\d+)', sector_seleccionado)
+            if match:
+                num_plantas = int(match.group(1))
+            # --- FIN DE LA CORRECCIÓN DEL BUG ---
 
             # --- LÓGICA DE DECISIÓN MEJORADA ---
             if es_dia_de_fertilizante:
@@ -116,7 +125,7 @@ with st.form("evaluacion_humedad_form"):
 if st.session_state.recommendation_generated:
     st.divider()
     st.header("Paso 2: Recomendación")
-    st.info(st.session_state.recomendacion_texto)
+    st.success(st.session_state.recomendacion_texto)
     
     st.divider()
     st.header("Paso 3: Registrar Acción Realizada")
