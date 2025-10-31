@@ -209,62 +209,8 @@ with tab1:
             else:
                 st.info("No hay datos para la fecha seleccionada.")
 
-# --- PESTAÑA 2 - ANÁLISIS DE RIEGO Y HUMEDAD (NUEVA) ---
+# --- PESTAÑA 2 - GRÁFICOS DE TENDENCIAS GENERALES ---
 with tab2:
-    st.header("Análisis de Riego y Humedad del Sustrato")
-    if df_fertirriego.empty:
-        st.warning("No hay datos de riego para analizar.")
-    else:
-        # --- PARTE A: RESUMEN DE LA SEMANA ACTUAL ---
-        st.subheader("Resumen de la Última Semana")
-        df_riego_semana = df_fertirriego[df_fertirriego['Fecha'] >= (datetime.now() - timedelta(days=7))].copy()
-        df_riego_semana.sort_values('Fecha', inplace=True)
-
-        if not df_riego_semana.empty:
-            # Gráfico de Tendencia de Humedad
-            fig_humedad = px.line(df_riego_semana, x='Fecha', y='humedad_promedio_medida', color='Sector',
-                                  title="Evolución de la Humedad del Sustrato (%)", markers=True,
-                                  labels={'humedad_promedio_medida': 'Humedad Promedio (%)'})
-            st.plotly_chart(fig_humedad, use_container_width=True)
-
-            # Tabla de Actividades Recientes
-            st.write("Tabla de Actividades de Riego (Últimos 7 días)")
-            columnas_a_mostrar = ['Fecha', 'Sector', 'humedad_promedio_medida', 'volumen_total_aplicado_litros', 'pH_final', 'CE_final', 'Observaciones']
-            st.dataframe(df_riego_semana[columnas_a_mostrar], use_container_width=True)
-        else:
-            st.info("No se han registrado riegos en los últimos 7 días.")
-
-        st.divider()
-
-        # --- PARTE B: CONSULTA DE REGISTROS HISTÓRICOS ---
-        st.subheader("Consulta de Registros Históricos por Fecha")
-        fechas_disponibles_riego = sorted(df_fertirriego['Fecha'].dt.date.unique(), reverse=True)
-        
-        if fechas_disponibles_riego:
-            fecha_seleccionada_riego = st.selectbox("Seleccione una Fecha para ver el Detalle:", fechas_disponibles_riego)
-            
-            df_detalle_dia = df_fertirriego[df_fertirriego['Fecha'].dt.date == fecha_seleccionada_riego]
-
-            if not df_detalle_dia.empty:
-                st.write(f"**Detalle(s) para el {fecha_seleccionada_riego.strftime('%d/%m/%Y')}:**")
-                for index, row in df_detalle_dia.iterrows():
-                    with st.container():
-                        st.write(f"**Registro para: {row['Sector']}**")
-                        det_cols = st.columns(4)
-                        det_cols[0].metric("Humedad Medida", f"{row['humedad_promedio_medida']:.1f}%")
-                        det_cols[1].metric("Volumen Aplicado", f"{row['volumen_total_aplicado_litros']:.1f} L")
-                        det_cols[2].metric("pH Final", f"{row['pH_final']:.2f}")
-                        det_cols[3].metric("CE Final", f"{row['CE_final']:.2f} dS/m")
-                        st.text_area("Notas y Observaciones", value=row['Observaciones'], disabled=True, key=f"obs_{index}")
-                        st.divider()
-
-            else:
-                st.warning("No se encontraron registros para la fecha seleccionada.")
-        else:
-            st.info("No hay fechas disponibles en el historial de riego.")
-
-# --- PESTAÑA 3 - GRÁFICOS DE TENDENCIAS GENERALES ---
-with tab3:
     st.header("Análisis de Tendencias Generales")
     
     # --- MODIFICACIÓN: Se elimina la primera columna (gcol1) que contenía el gráfico de fertirriego ---
