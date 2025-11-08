@@ -111,6 +111,11 @@ if uploaded_file is not None:
             # antes de enviarlos a Supabase (que espera JSON).
             df_final['timestamp'] = df_final['timestamp'].apply(lambda x: x.isoformat())
 
+            # --- NUEVA CORRECCIÓN (Paso B) ---
+            # Reemplazar los 'NaN' (creados por pd.to_numeric) con 'None' (que es compatible con JSON/null)
+            # Usamos .astype(object) para permitir 'None' en columnas numéricas
+            df_final = df_final.astype(object).where(pd.notnull(df_final), None)
+
             # 6. Convertir a un formato de diccionario para Supabase
             records_to_insert = df_final.to_dict('records')
             
