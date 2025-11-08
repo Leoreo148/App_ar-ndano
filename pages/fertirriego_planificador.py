@@ -148,81 +148,84 @@ if "ERROR" in st.session_state.tarea_de_hoy:
      st.error("No se pudo leer el cronograma. Revisa el error de arriba y asegúrate de que 'FRUTALES - EXCEL.xlsx' esté en la raíz.")
 else:
     # ======================================================================
-    # PASO 2, 3 y 4: FORMULARIO UNIFICADO DE JORNADA
+    # PASO 2: PRUEBA DE DRENAJE (¡¡FUERA DEL FORMULARIO!!)
+    # Esto ahora se actualizará en vivo.
+    # ======================================================================
+    
+    st.header("Paso 2: Prueba de Drenaje (Testigos)")
+    st.write("Ingrese los datos PROMEDIO de sus macetas testigo (6 de coco, 3 de cascarilla).")
+
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Este widget ahora está FUERA del form, pero su valor se guarda
+        # gracias a la 'key'
+        sustrato_testigo = st.radio(
+            "Sustrato del Testigo:",
+            ("Fibra de Coco", "Cascarilla de Arroz"),
+            horizontal=True,
+            key="sustrato_testigo"
+        )
+        # Estos inputs ahora se actualizan en vivo
+        testigo_vol_aplicado_ml = st.number_input(
+            "Volumen Aplicado (mL/maceta)", 
+            min_value=0.0, 
+            step=50.0, 
+            value=1000.0,
+            key="testigo_vol_aplicado_ml" # La 'key' es crucial
+        )
+        testigo_vol_drenado_ml = st.number_input(
+            "Volumen Drenado (mL/maceta)", 
+            min_value=0.0, 
+            step=10.0, 
+            value=250.0,
+            key="testigo_vol_drenado_ml" # La 'key' es crucial
+        )
+        meta_drenaje = st.number_input(
+            "Meta de Drenaje Objetivo (%)", 
+            min_value=0.0, 
+            max_value=100.0, 
+            value=25.0, 
+            step=1.0,
+            key="meta_drenaje"
+        )
+
+    # --- CÁLCULO EN VIVO ---
+    # Como los inputs están fuera del form, estas variables
+    # tendrán el valor actualizado en cada re-ejecución (cada cambio)
+    if testigo_vol_aplicado_ml > 0:
+        testigo_porc_drenaje = (testigo_vol_drenado_ml / testigo_vol_aplicado_ml) * 100
+    else:
+        testigo_porc_drenaje = 0.0
+    
+    with col2:
+        # Esta métrica ahora se actualizará instantáneamente
+        st.metric("Drenaje Alcanzado", f"{testigo_porc_drenaje:.1f}%")
+        
+        if 'recomendacion_volumen' not in st.session_state:
+             st.session_state.recomendacion_volumen = 1000.0
+
+        if testigo_vol_aplicado_ml == 0:
+            st.info("Ingrese un volumen aplicado para calcular.")
+        # Usamos la meta_drenaje (que también se actualiza en vivo)
+        elif abs(testigo_porc_drenaje - meta_drenaje) < 5: 
+            st.success(f"✅ DRENAJE ÓPTIMO. El {testigo_porc_drenaje:.1f}% está cerca de la meta ({meta_drenaje}%).")
+            st.session_state.recomendacion_volumen = testigo_vol_aplicado_ml
+        elif testigo_porc_drenaje < meta_drenaje:
+            st.warning(f"⚠️ DRENAJE INSUFICIENTE. El {testigo_porc_drenaje:.1f}% está por debajo de la meta ({meta_drenaje}%).")
+            st.session_state.recomendacion_volumen = testigo_vol_aplicado_ml
+        else:
+            st.warning(f"⚠️ DRENAJE EXCESIVO. El {testigo_porc_drenaje:.1f}% está muy por encima de la meta ({meta_drenaje}%).")
+            st.session_state.recomendacion_volumen = testigo_vol_aplicado_ml
+
+    st.divider()
+
+    # ======================================================================
+    # PASO 3 y 4: FORMULARIO UNIFICADO DE JORNADA
+    # El formulario AHORA EMPIEZA AQUÍ
     # ======================================================================
     with st.form("jornada_form"):
         
-        st.header("Paso 2: Prueba de Drenaje (Testigos)")
-        st.write("Ingrese los datos PROMEDIO de sus macetas testigo (6 de coco, 3 de cascarilla).")
-
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            sustrato_testigo = st.radio(
-                "Sustrato del Testigo:",
-                ("Fibra de Coco", "Cascarilla de Arroz"),
-                horizontal=True,
-                key="sustrato_testigo"
-            )
-            # Los valores por defecto (1000 y 250) se usan en la primera carga
-            testigo_vol_aplicado_ml = st.number_input(
-                "Volumen Aplicado (mL/maceta)", 
-                min_value=0.0, 
-                step=50.0, 
-                value=1000.0,
-                key="testigo_vol_aplicado_ml" # La 'key' es crucial
-            )
-            testigo_vol_drenado_ml = st.number_input(
-                "Volumen Drenado (mL/maceta)", 
-                min_value=0.0, 
-                step=10.0, 
-                value=250.0,
-                key="testigo_vol_drenado_ml" # La 'key' es crucial
-            )
-            meta_drenaje = st.number_input(
-                "Meta de Drenaje Objetivo (%)", 
-                min_value=0.0, 
-                max_value=100.0, 
-                value=25.0, 
-                step=1.0,
-                key="meta_drenaje"
-            )
-
-        # --- CORRECCIÓN DE BUG AQUÍ ---
-        # Leemos los valores actuales desde st.session_state para el cálculo en VIVO
-        # (Esto se asegura que los valores por defecto se usen si no se ha escrito nada)
-        current_vol_aplicado = st.session_state.get('testigo_vol_aplicado_ml', 1000.0)
-        current_vol_drenado = st.session_state.get('testigo_vol_drenado_ml', 250.0)
-        current_meta_drenaje = st.session_state.get('meta_drenaje', 25.0)
-
-
-        if current_vol_aplicado > 0:
-            testigo_porc_drenaje = (current_vol_drenado / current_vol_aplicado) * 100
-        else:
-            testigo_porc_drenaje = 0.0
-        
-        with col2:
-            # Esta métrica ahora se actualizará instantáneamente
-            st.metric("Drenaje Alcanzado", f"{testigo_porc_drenaje:.1f}%")
-            
-            if 'recomendacion_volumen' not in st.session_state:
-                 st.session_state.recomendacion_volumen = 1000.0
-
-            if current_vol_aplicado == 0:
-                st.info("Ingrese un volumen aplicado para calcular.")
-            # Usamos la meta actual leída de session_state
-            elif abs(testigo_porc_drenaje - current_meta_drenaje) < 5: 
-                st.success(f"✅ DRENAJE ÓPTIMO. El {testigo_porc_drenaje:.1f}% está cerca de la meta ({current_meta_drenaje}%).")
-                st.session_state.recomendacion_volumen = current_vol_aplicado
-            elif testigo_porc_drenaje < current_meta_drenaje:
-                st.warning(f"⚠️ DRENAJE INSUFICIENTE. El {testigo_porc_drenaje:.1f}% está por debajo de la meta ({current_meta_drenaje}%).")
-                st.session_state.recomendacion_volumen = current_vol_aplicado
-            else:
-                st.warning(f"⚠️ DRENAJE EXCESIVO. El {testigo_porc_drenaje:.1f}% está muy por encima de la meta ({current_meta_drenaje}%).")
-                st.session_state.recomendacion_volumen = current_vol_aplicado
-
-        st.divider()
-
         # --- Paso 3: Mediciones ---
         st.header("Paso 3: Mediciones (Drenaje y Riego)")
         mcol1, mcol2 = st.columns(2)
@@ -250,7 +253,7 @@ else:
         
         with rcol2:
             st.subheader("Volumen")
-            # Sugerir volumen total (44 plantas * volumen recomendado)
+            # El volumen sugerido usará el valor más reciente de session_state
             vol_sugerido = (st.session_state.get('recomendacion_volumen', 1000.0) * 44) / 1000 # 44 plantas
             
             general_vol_aplicado_litros = st.number_input(
@@ -264,7 +267,7 @@ else:
         
         st.divider()
         
-        # --- NUEVO: Sección de Dosis ---
+        # --- Sección de Dosis ---
         st.subheader("Configuración de Dosis")
         tipo_dosis = st.radio(
             "¿Cómo se está aplicando la dosis de fertilizante?",
@@ -293,10 +296,11 @@ else:
         submitted = st.form_submit_button("💾 Guardar Jornada Completa")
 
     # --- Lógica de Guardado ---
+    # Esta lógica no cambia, porque ya leía todo de st.session_state
     if submitted:
         if not supabase:
             st.error("Error fatal: No hay conexión con Supabase.")
-        # Usamos los valores de session_state para la validación final
+        # Leemos el valor de session_state (que se actualizó en vivo)
         elif st.session_state.testigo_vol_aplicado_ml <= 0: 
             st.warning("No se puede guardar: El 'Volumen Aplicado (mL/maceta)' debe ser mayor a cero.")
         else:
@@ -307,11 +311,13 @@ else:
                 # Leemos los valores finales de los widgets usando sus keys
                 datos_para_insertar = {
                     "fecha": fecha_actual_peru.strftime("%Y-%m-%d"),
+                    # Estos valores vienen de FUERA del form (Paso 2)
                     "sustrato_testigo": st.session_state.sustrato_testigo,
-                    "tarea_del_dia": st.session_state.tarea_de_hoy,
                     "testigo_vol_aplicado_ml": st.session_state.testigo_vol_aplicado_ml,
                     "testigo_vol_drenado_ml": st.session_state.testigo_vol_drenado_ml,
                     "testigo_porc_drenaje": testigo_porc_drenaje_final,
+                    # Estos valores vienen de DENTRO del form (Paso 3 y 4)
+                    "tarea_del_dia": st.session_state.tarea_de_hoy,
                     "testigo_ph_drenaje": st.session_state.testigo_ph_drenaje,
                     "testigo_ce_drenaje": st.session_state.testigo_ce_drenaje,
                     "general_vol_aplicado_litros": st.session_state.general_vol_aplicado_litros,
@@ -320,12 +326,10 @@ else:
                     "mezcla_ph_final": st.session_state.mezcla_ph_final,
                     "mezcla_ce_final": st.session_state.mezcla_ce_final,
                     "observaciones": st.session_state.observaciones,
-                    # --- NUEVOS CAMPOS PARA GUARDAR ---
                     "tipo_dosis": st.session_state.tipo_dosis,
                     "dias_aplicados": st.session_state.dias_aplicados if "acumulada" in st.session_state.tipo_dosis else 1
                 }
                 
-                # Insertar en la NUEVA tabla 'Jornada_Riego'
                 supabase.table('Jornada_Riego').insert(datos_para_insertar).execute()
                 
                 st.success("¡Jornada de riego guardada exitosamente en la tabla 'Jornada_Riego'!")
