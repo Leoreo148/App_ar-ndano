@@ -5,6 +5,7 @@ from datetime import datetime
 from supabase import create_client
 import pytz # Para manejar la zona horaria
 import os # Para comprobar si el archivo existe
+import re # Para limpiar nombres de columnas
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Jornada de Fertiriego", page_icon="💧🧪", layout="wide")
@@ -39,11 +40,11 @@ st.write("Flujo completo para registrar la prueba de drenaje, las mediciones y l
 FILE_PATH = "FRUTALES - EXCEL.xlsx"
 
 # --- FUNCIÓN DE CARGA MODIFICADA ---
-@st.cache_data(ttl=600) # Cachear por 10 minutos
+@st.cache_data(ttl=600) 
 def load_cronograma(fecha_hoy):
     """
     Lee el cronograma desde el archivo en la raíz.
-    Ahora devuelve un (string, pandas.Series) con los datos de la fila.
+    Devuelve un (string, pandas.Series) con los datos de la fila.
     """
     sheet_name = "CRONOGRAMA"
     
@@ -51,7 +52,7 @@ def load_cronograma(fecha_hoy):
         df = pd.read_excel(
             FILE_PATH, 
             sheet_name=sheet_name, 
-            header=4  # <-- La corrección clave
+            header=4  # La cabecera está en la fila 5 (índice 4)
         )
         
         df = df.dropna(subset=['FECHA'])
@@ -62,7 +63,6 @@ def load_cronograma(fecha_hoy):
         if task_row_df.empty:
             return "No hay tarea de fertilización programada en el Excel para hoy.", None
 
-        # Guardamos la fila entera de datos
         task_row_data = task_row_df.iloc[0]
         tarea_str = "Riego (Sin grupo de fertilizante específico hoy)"
 
@@ -83,7 +83,6 @@ def load_cronograma(fecha_hoy):
 
     except FileNotFoundError:
         st.error(f"Error 'FileNotFoundError': No se encontró el archivo en la ruta: '{FILE_PATH}'.")
-        st.info("Asegúrate de que 'FRUTALES - EXCEL.xlsx' esté en la carpeta raíz (junto a Dashboard.py).")
         return "ERROR: Archivo no encontrado", None
     except KeyError as e:
         st.error(f"Error de 'KeyError': No se encontró la columna {e}. Revisa el Excel. ¿La cabecera está en la fila 5?")
@@ -96,46 +95,46 @@ def load_cronograma(fecha_hoy):
         st.info("Asegúrese también de tener 'openpyxl' instalado (en requirements.txt).")
         return "ERROR AL PROCESAR CRONOGRAMA", None
 
-# --- LÓGICA PRINCIPAL ---
+# --- LÓGICA PRINCIPAL (PASO 1) ---
 if TZ_PERU:
     try:
         fecha_actual_peru = datetime.now(TZ_PERU).date()
         fecha_hoy_pd = pd.to_datetime(fecha_actual_peru)
-        # Ahora obtenemos dos valores de la función
         tarea_de_hoy, datos_dosis = load_cronograma(fecha_hoy_pd) 
         st.session_state.tarea_de_hoy = tarea_de_hoy
         st.session_state.datos_dosis = datos_dosis # Guardamos los datos de la fila
     except Exception as e:
         st.error(f"Error obteniendo fecha o cargando cronograma: {e}")
-        fecha_actual_peru = datetime.now().date() # Fallback
+        fecha_actual_peru = datetime.now().date() 
         st.session_state.tarea_de_hoy = "Error en fecha"
         st.session_state.datos_dosis = None
 else:
     st.error("No se pudo definir la zona horaria. La fecha puede ser incorrecta.")
-    fecha_actual_peru = datetime.now().date() # Fallback
+    fecha_actual_peru = datetime.now().date() 
     st.session_state.tarea_de_hoy = "Indeterminada"
     st.session_state.datos_dosis = None
 
 st.header("Paso 1: Tarea Programada")
 st.info(f"Tarea para hoy ({fecha_actual_peru.strftime('%d/%m/%Y')}): **{st.session_state.tarea_de_hoy}**")
 
-# --- NUEVO: Mostrar dosis del día si existen ---
+# --- Mostrar dosis del día si existen ---
 if st.session_state.datos_dosis is not None:
-    with st.expander("Ver dosis programada para hoy (según Excel)"):
+    with st.expander("Ver dosis DIARIA programada (según Excel, mg/L/día)"):
         datos = st.session_state.datos_dosis
-        dosis_info = {
-            "Urea (mg/L/día)": datos.iloc[7],
-            "Fosfato Monoamónico (mg/L/día)": datos.iloc[8],
-            "Sulf. de Potasio (mg/L/día)": datos.iloc[9],
-            "Sulf. de Magnesio (mg/L/día)": datos.iloc[10],
-            "Sulf. de Cobre (mg/L/día)": datos.iloc[11],
-            "Sulf. de Manganeso (mg/L/día)": datos.iloc[12],
-            "Sulf. de Zinc (mg/L/día)": datos.iloc[13],
-            "Boro (mg/L/día)": datos.iloc[14],
-            "Nitrato de Calcio (mg/L/día)": datos.iloc[15],
-        }
-        # Filtrar solo los que no son NaN (no tienen valor)
-        dosis_info_filtrada = {k: v for k, v in dosis_info.items() if pd.notna(v)}
+        # Lista de (Nombre, índice de columna)
+        fertilizantes_info = [
+            ("Urea", 7), ("Fosfato Monoamónico", 8), ("Sulf. de Potasio", 9),
+            ("Sulf. de Magnesio", 10), ("Sulf. de Cobre", 11), ("Sulf. de Manganeso", 12),
+            ("Sulf. de Zinc", 13), ("Boro", 14), ("Nitrato de Calcio", 15)
+        ]
+        
+        dosis_info_filtrada = {}
+        for nombre, indice in fertilizantes_info:
+            valor = datos.iloc[indice]
+            if pd.notna(valor) and valor > 0:
+                # Limpiamos el nombre para el diccionario
+                key = f"{nombre} (mg/L/día)"
+                dosis_info_filtrada[key] = valor
         
         if not dosis_info_filtrada:
             st.write("No hay dosis de fertilizantes específicas listadas para la tarea de hoy.")
@@ -143,43 +142,39 @@ if st.session_state.datos_dosis is not None:
             st.json(dosis_info_filtrada)
 
 
-# Si la tarea falló, mostramos un error antes del formulario
+# Si la tarea falló, no mostramos el resto de la app
 if "ERROR" in st.session_state.tarea_de_hoy:
      st.error("No se pudo leer el cronograma. Revisa el error de arriba y asegúrate de que 'FRUTALES - EXCEL.xlsx' esté en la raíz.")
 else:
     # ======================================================================
-    # PASO 2: PRUEBA DE DRENAJE (¡¡FUERA DEL FORMULARIO!!)
-    # Esto ahora se actualizará en vivo.
+    # PASO 2: PRUEBA DE DRENAJE (FUERA DEL FORMULARIO)
     # ======================================================================
     
     st.header("Paso 2: Prueba de Drenaje (Testigos)")
-    st.write("Ingrese los datos PROMEDIO de sus macetas testigo (6 de coco, 3 de cascarilla).")
+    st.write("Ingrese los datos PROMEDIO de sus macetas testigo.")
 
     col1, col2 = st.columns(2)
     
     with col1:
-        # Este widget ahora está FUERA del form, pero su valor se guarda
-        # gracias a la 'key'
         sustrato_testigo = st.radio(
             "Sustrato del Testigo:",
             ("Fibra de Coco", "Cascarilla de Arroz"),
             horizontal=True,
             key="sustrato_testigo"
         )
-        # Estos inputs ahora se actualizan en vivo
         testigo_vol_aplicado_ml = st.number_input(
             "Volumen Aplicado (mL/maceta)", 
             min_value=0.0, 
             step=50.0, 
             value=1000.0,
-            key="testigo_vol_aplicado_ml" # La 'key' es crucial
+            key="testigo_vol_aplicado_ml" 
         )
         testigo_vol_drenado_ml = st.number_input(
             "Volumen Drenado (mL/maceta)", 
             min_value=0.0, 
             step=10.0, 
             value=250.0,
-            key="testigo_vol_drenado_ml" # La 'key' es crucial
+            key="testigo_vol_drenado_ml" 
         )
         meta_drenaje = st.number_input(
             "Meta de Drenaje Objetivo (%)", 
@@ -191,15 +186,12 @@ else:
         )
 
     # --- CÁLCULO EN VIVO ---
-    # Como los inputs están fuera del form, estas variables
-    # tendrán el valor actualizado en cada re-ejecución (cada cambio)
     if testigo_vol_aplicado_ml > 0:
         testigo_porc_drenaje = (testigo_vol_drenado_ml / testigo_vol_aplicado_ml) * 100
     else:
         testigo_porc_drenaje = 0.0
     
     with col2:
-        # Esta métrica ahora se actualizará instantáneamente
         st.metric("Drenaje Alcanzado", f"{testigo_porc_drenaje:.1f}%")
         
         if 'recomendacion_volumen' not in st.session_state:
@@ -207,7 +199,6 @@ else:
 
         if testigo_vol_aplicado_ml == 0:
             st.info("Ingrese un volumen aplicado para calcular.")
-        # Usamos la meta_drenaje (que también se actualiza en vivo)
         elif abs(testigo_porc_drenaje - meta_drenaje) < 5: 
             st.success(f"✅ DRENAJE ÓPTIMO. El {testigo_porc_drenaje:.1f}% está cerca de la meta ({meta_drenaje}%).")
             st.session_state.recomendacion_volumen = testigo_vol_aplicado_ml
@@ -221,15 +212,114 @@ else:
     st.divider()
 
     # ======================================================================
-    # PASO 3 y 4: FORMULARIO UNIFICADO DE JORNADA
-    # El formulario AHORA EMPIEZA AQUÍ
+    # PASO 3: REGISTRO GENERAL (FUERA DEL FORMULARIO)
+    # ======================================================================
+    st.header("Paso 3: Registro General de la Jornada")
+    
+    rcol1, rcol2 = st.columns(2)
+    with rcol1:
+        st.subheader("Mezcla Final (Bidón)")
+        mezcla_ph_final = st.number_input("pH Mezcla Final", min_value=0.0, max_value=14.0, value=5.8, step=0.1, format="%.2f", key="mezcla_ph_final")
+        mezcla_ce_final = st.number_input("CE Mezcla Final (dS/m)", min_value=0.0, value=2.0, step=0.1, format="%.2f", key="mezcla_ce_final")
+    
+    with rcol2:
+        st.subheader("Volumen")
+        # El volumen sugerido usará el valor más reciente de session_state
+        vol_sugerido = (st.session_state.get('recomendacion_volumen', 1000.0) * 44) / 1000 
+        
+        general_vol_aplicado_litros = st.number_input(
+            "Volumen Total Aplicado (Litros)", 
+            min_value=0.0, 
+            value=vol_sugerido, 
+            step=1.0, 
+            format="%.1f",
+            key="general_vol_aplicado_litros",
+            help="Este valor se usará para calcular los gramos de fertilizante."
+        )
+    
+    st.divider()
+
+    # ======================================================================
+    # PASO 4: CÁLCULO DE DOSIS (FUERA DEL FORMULARIO)
+    # ======================================================================
+    st.header("Paso 4: Cálculo de Dosis de Fertilizantes")
+    
+    dias_aplicados = st.number_input(
+        "¿Cuántos días de dosis vas a aplicar hoy?",
+        min_value=1, max_value=14, value=1, step=1,
+        key="dias_aplicados",
+        help="Escribe '1' para la dosis normal del día. Escribe '7' si aplicas la dosis de toda la semana."
+    )
+    
+    # --- CÁLCULO DE DOSIS EN VIVO ---
+    
+    # Leer los valores en vivo de los widgets (usando sus 'key')
+    current_vol_litros = general_vol_aplicado_litros
+    current_dias = dias_aplicados
+    datos_dosis_excel = st.session_state.get('datos_dosis')
+
+    st.subheader("Dosis Total de Fertilizante a aplicar en Bidón")
+    st.write(f"Cálculo para **{current_dias} día(s)** en un volumen total de **{current_vol_litros:.1f} Litros**:")
+
+    if datos_dosis_excel is None:
+        st.warning("No hay datos de dosis del Excel para calcular.")
+    else:
+        # Definir los nombres de las columnas y los índices
+        fertilizantes = [
+            # (Nombre a mostrar, Nombre Columna Supabase, Índice Excel)
+            ("Urea", "total_urea_g", 7),
+            ("Fosfato Monoamónico", "total_fosfato_monoamonico_g", 8),
+            ("Sulf. de Potasio", "total_sulf_de_potasio_g", 9),
+            ("Sulf. de Magnesio", "total_sulf_de_magnesio_g", 10),
+            ("Sulf. de Cobre", "total_sulf_de_cobre_g", 11),
+            ("Sulf. de Manganeso", "total_sulf_de_manganeso_g", 12),
+            ("Sulf. de Zinc", "total_sulf_de_zinc_g", 13),
+            ("Boro", "total_boro_g", 14),
+            ("Nitrato de Calcio", "total_nitrato_de_calcio_g", 15)
+        ]
+        
+        # Diccionario para guardar los totales que irán a Supabase
+        calculos_finales_g = {}
+        # Lista para el DataFrame que se mostrará en pantalla
+        display_data = []
+
+        for nombre_display, nombre_col_db, indice in fertilizantes:
+            dosis_mg_l_dia = datos_dosis_excel.iloc[indice]
+            
+            total_g = 0.0 # Por defecto es 0
+            if pd.notna(dosis_mg_l_dia) and dosis_mg_l_dia > 0:
+                # 1. (mg/L/día) * días = mg/L totales
+                dosis_total_mg_l = dosis_mg_l_dia * current_dias
+                # 2. (mg/L) * L = mg totales
+                total_mg = dosis_total_mg_l * current_vol_litros
+                # 3. mg / 1000 = g totales
+                total_g = total_mg / 1000.0
+            
+            # Guardar para Supabase
+            calculos_finales_g[nombre_col_db] = total_g
+            
+            # Guardar para mostrar, solo si es mayor a 0
+            if total_g > 0:
+                display_data.append({"Fertilizante": nombre_display, "Cantidad Total": f"{total_g:.2f} g"})
+
+        # Guardar los cálculos en session_state para el botón de guardar
+        st.session_state.calculos_finales_g = calculos_finales_g
+
+        if not display_data:
+            st.info("La tarea de hoy no tiene fertilizantes programados.")
+        else:
+            st.dataframe(pd.DataFrame(display_data), use_container_width=True)
+
+    st.divider()
+
+    # ======================================================================
+    # PASO 5: MEDICIONES Y GUARDADO (DENTRO DEL FORMULARIO)
     # ======================================================================
     with st.form("jornada_form"):
+        st.header("Paso 5: Mediciones y Notas (Guardar)")
         
-        # --- Paso 3: Mediciones ---
-        st.header("Paso 3: Mediciones (Drenaje y Riego)")
+        # (El viejo Paso 3 va aquí)
         mcol1, mcol2 = st.columns(2)
-
         with mcol1:
             st.subheader("Medición del Drenaje (Lixiviado)")
             testigo_ph_drenaje = st.number_input("pH del Drenaje", min_value=0.0, max_value=14.0, value=6.0, step=0.1, format="%.2f", key="testigo_ph_drenaje")
@@ -241,53 +331,9 @@ else:
             fuente_ce = st.number_input("CE Agua Origen (dS/m)", min_value=0.0, value=0.8, step=0.1, format="%.2f", key="fuente_ce")
 
         st.divider()
-        
-        # --- Paso 4: Registro General ---
-        st.header("Paso 4: Registro General de la Jornada")
-        
-        rcol1, rcol2 = st.columns(2)
-        with rcol1:
-            st.subheader("Mezcla Final (Bidón)")
-            mezcla_ph_final = st.number_input("pH Mezcla Final", min_value=0.0, max_value=14.0, value=5.8, step=0.1, format="%.2f", key="mezcla_ph_final")
-            mezcla_ce_final = st.number_input("CE Mezcla Final (dS/m)", min_value=0.0, value=2.0, step=0.1, format="%.2f", key="mezcla_ce_final")
-        
-        with rcol2:
-            st.subheader("Volumen")
-            # El volumen sugerido usará el valor más reciente de session_state
-            vol_sugerido = (st.session_state.get('recomendacion_volumen', 1000.0) * 44) / 1000 # 44 plantas
-            
-            general_vol_aplicado_litros = st.number_input(
-                "Volumen Total Aplicado (Litros)", 
-                min_value=0.0, 
-                value=vol_sugerido, 
-                step=1.0, 
-                format="%.1f",
-                key="general_vol_aplicado_litros"
-            )
-        
-        st.divider()
-        
-        # --- Sección de Dosis ---
-        st.subheader("Configuración de Dosis")
-        tipo_dosis = st.radio(
-            "¿Cómo se está aplicando la dosis de fertilizante?",
-            ("Dosis de hoy (1 día)", "Dosis acumulada (ej: 7 días)"),
-            horizontal=True,
-            key="tipo_dosis"
-        )
-        dias_aplicados = 1
-        if "acumulada" in tipo_dosis:
-            dias_aplicados = st.number_input(
-                "¿Cuántos días de dosis está aplicando hoy?", 
-                min_value=1, max_value=14, value=7, step=1,
-                key="dias_aplicados"
-            )
-        
-        st.divider()
-        
         st.subheader("Notas Adicionales")
         observaciones = st.text_area(
-            "Observaciones y Productos Aplicados:", 
+            "Observaciones:", 
             placeholder=f"Ej: Se aplicó {st.session_state.tarea_de_hoy}. El drenaje de cascarilla fue X. Todo normal.",
             key="observaciones"
         )
@@ -295,12 +341,10 @@ else:
         # --- Botón de Envío ---
         submitted = st.form_submit_button("💾 Guardar Jornada Completa")
 
-    # --- Lógica de Guardado ---
-    # Esta lógica no cambia, porque ya leía todo de st.session_state
+    # --- LÓGICA DE GUARDADO ---
     if submitted:
         if not supabase:
             st.error("Error fatal: No hay conexión con Supabase.")
-        # Leemos el valor de session_state (que se actualizó en vivo)
         elif st.session_state.testigo_vol_aplicado_ml <= 0: 
             st.warning("No se puede guardar: El 'Volumen Aplicado (mL/maceta)' debe ser mayor a cero.")
         else:
@@ -311,24 +355,35 @@ else:
                 # Leemos los valores finales de los widgets usando sus keys
                 datos_para_insertar = {
                     "fecha": fecha_actual_peru.strftime("%Y-%m-%d"),
-                    # Estos valores vienen de FUERA del form (Paso 2)
+                    
+                    # Paso 1 (Excel)
+                    "tarea_del_dia": st.session_state.tarea_de_hoy,
+                    
+                    # Paso 2 (Drenaje)
                     "sustrato_testigo": st.session_state.sustrato_testigo,
                     "testigo_vol_aplicado_ml": st.session_state.testigo_vol_aplicado_ml,
                     "testigo_vol_drenado_ml": st.session_state.testigo_vol_drenado_ml,
                     "testigo_porc_drenaje": testigo_porc_drenaje_final,
-                    # Estos valores vienen de DENTRO del form (Paso 3 y 4)
-                    "tarea_del_dia": st.session_state.tarea_de_hoy,
-                    "testigo_ph_drenaje": st.session_state.testigo_ph_drenaje,
-                    "testigo_ce_drenaje": st.session_state.testigo_ce_drenaje,
-                    "general_vol_aplicado_litros": st.session_state.general_vol_aplicado_litros,
-                    "fuente_ph": st.session_state.fuente_ph,
-                    "fuente_ce": st.session_state.fuente_ce,
+                    
+                    # Paso 3 (Registro General)
                     "mezcla_ph_final": st.session_state.mezcla_ph_final,
                     "mezcla_ce_final": st.session_state.mezcla_ce_final,
+                    "general_vol_aplicado_litros": st.session_state.general_vol_aplicado_litros,
+
+                    # Paso 4 (Dosis)
+                    "dias_aplicados": st.session_state.dias_aplicados,
+                    
+                    # Paso 5 (Formulario)
+                    "testigo_ph_drenaje": st.session_state.testigo_ph_drenaje,
+                    "testigo_ce_drenaje": st.session_state.testigo_ce_drenaje,
+                    "fuente_ph": st.session_state.fuente_ph,
+                    "fuente_ce": st.session_state.fuente_ce,
                     "observaciones": st.session_state.observaciones,
-                    "tipo_dosis": st.session_state.tipo_dosis,
-                    "dias_aplicados": st.session_state.dias_aplicados if "acumulada" in st.session_state.tipo_dosis else 1
                 }
+                
+                # --- AÑADIR LOS GRAMOS CALCULADOS ---
+                if 'calculos_finales_g' in st.session_state:
+                    datos_para_insertar.update(st.session_state.calculos_finales_g)
                 
                 supabase.table('Jornada_Riego').insert(datos_para_insertar).execute()
                 
@@ -337,28 +392,26 @@ else:
 
             except Exception as e:
                 st.error(f"Error al guardar en Supabase: {e}")
-                st.warning("Posible Causa: ¿Agregaste las columnas 'tipo_dosis' (text) y 'dias_aplicados' (int) a la tabla 'Jornada_Riego' en Supabase?")
-
+                st.warning("Error GRAVE al guardar. Posible Causa: ¿Agregaste las 9 NUEVAS columnas de gramos (ej: 'total_urea_g') a la tabla 'Jornada_Riego' en Supabase?")
 
     # ======================================================================
-    # SECCIÓN DE HISTORIAL Y GRÁFICOS
+    # SECCIÓN DE HISTORIAL Y GRÁFICOS (Esto no cambia)
     # ======================================================================
     st.divider()
     st.header("Historial y Tendencias de la Jornada")
 
-    @st.cache_data(ttl=300) # Cachear por 5 minutos
+    @st.cache_data(ttl=300) 
     def cargar_datos_jornada():
         if not supabase:
             return pd.DataFrame()
         try:
-            # Leer de la NUEVA tabla 'Jornada_Riego'
             response = supabase.table('Jornada_Riego').select("*").order('fecha', desc=True).limit(100).execute()
             if response.data:
                 df = pd.DataFrame(response.data)
                 df['fecha'] = pd.to_datetime(df['fecha'])
                 return df
             else:
-                return pd.DataFrame() # Retorna DF vacío si no hay datos
+                return pd.DataFrame() 
         except Exception as e:
             st.error(f"No se pudieron cargar los datos del historial: {e}")
             return pd.DataFrame()
@@ -369,11 +422,10 @@ else:
         st.info("Aún no hay registros en 'Jornada_Riego'.")
     else:
         st.write("Últimas jornadas registradas:")
-        st.dataframe(df_historial.head(), use_container_width=True) # Mostrar solo las primeras 5
+        st.dataframe(df_historial.head(), use_container_width=True)
 
         st.subheader("Gráficos de Tendencias")
         
-        # Filtrar por sustrato para que los gráficos no se saturen
         sustratos_unicos = ["Todos"] + list(df_historial['sustrato_testigo'].unique())
         sustrato_filtro = st.selectbox("Filtrar gráficos por sustrato:", sustratos_unicos)
         
@@ -384,7 +436,6 @@ else:
         if df_filtrado.empty:
             st.warning("No hay datos para el sustrato seleccionado.")
         else:
-            # Gráficos de Drenaje (Testigos)
             gcol1, gcol2 = st.columns(2)
             with gcol1:
                 fig_ph_drenaje = px.line(df_filtrado, x='fecha', y='testigo_ph_drenaje', color='sustrato_testigo',
@@ -395,7 +446,6 @@ else:
                                          title="Evolución de la CE en Drenaje (Testigo)", markers=True)
                 st.plotly_chart(fig_ce_drenaje, use_container_width=True)
 
-            # Gráficos de Mezcla Final (Bidón)
             gcol3, gcol4 = st.columns(2)
             with gcol3:
                 fig_ph_mezcla = px.line(df_filtrado, x='fecha', y='mezcla_ph_final',
