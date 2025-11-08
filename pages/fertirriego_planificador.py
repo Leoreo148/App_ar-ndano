@@ -1,22 +1,12 @@
 import streamlit as st
-from datetime import datetime
 import pandas as pd
-import pytz # Para la zona horaria
-
-# --- LIBRERÍAS PARA LA CONEXIÓN A SUPABASE ---
+import plotly.express as px
+from datetime import datetime
 from supabase import create_client
+import pytz # Para manejar la zona horaria
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
-st.set_page_config(page_title="Gestor de Fertirriego", page_icon="🧑‍🔬", layout="wide")
-st.title("🧑‍🔬 Gestor de Fertirriego")
-st.write("Registre la preparación de Soluciones Madre y la aplicación diaria de riegos.")
-
-# --- ZONA HORARIA DE PERÚ (SOLUCIÓN AL BUG DE LA HORA) ---
-try:
-    TZ_PERU = pytz.timezone('America/Lima')
-except ImportError:
-    st.error("Se necesita la librería 'pytz'. Instálala con: pip install pytz")
-    TZ_PERU = None
+st.set_page_config(page_title="Jornada de Fertiriego", page_icon="💧🧪", layout="wide")
 
 # --- CONEXIÓN A SUPABASE ---
 @st.cache_resource
@@ -31,255 +21,274 @@ def init_supabase_connection():
 
 supabase = init_supabase_connection()
 
-# --- EL "CEREBRO": BASE DE DATOS DE FERTILIZANTES (Basado en tu Excel) ---
-FERTILIZANTES_DB = {
-    # --- Grupo 1: Compatibles (Para Solución Madre) ---
-    "Urea": {"grupo": 1, "nutrientes": ["N"]},
-    "Fosfato Monoamonico (MAP)": {"grupo": 1, "nutrientes": ["N", "P"]},
-    "Sulfato de Potasio": {"grupo": 1, "nutrientes": ["K", "S"]},
-    "Sulfato de Manganeso": {"grupo": 1, "nutrientes": ["Mn", "S"]},
-    "Acido Bórico": {"grupo": 1, "nutrientes": ["B"]},
-    "Sulfato de Zinc": {"grupo": 1, "nutrientes": ["Zn", "S"]},
-    "Sulfato de Cobre": {"grupo": 1, "nutrientes": ["Cu", "S"]},
+# --- ZONA HORARIA DE PERÚ ---
+try:
+    TZ_PERU = pytz.timezone('America/Lima')
+except ImportError:
+    st.error("Se necesita la librería 'pytz'. Instálala con: pip install pytz")
+    TZ_PERU = None
+
+# ======================================================================
+# PASO 1: TAREA DEL DÍA (LEYENDO DEL CSV)
+# ======================================================================
+st.title("💧🧪 Jornada de Fertiriego y Drenaje")
+st.write("Flujo completo para registrar la prueba de drenaje, las mediciones y la jornada de riego.")
+
+@st.cache_data(ttl=600) # Cachear por 10 minutos
+def load_cronograma(fecha_hoy):
+    try:
+        # Cargar el CSV. Asumimos que las cabeceras útiles empiezan en la fila 6 (índice 5)
+        df = pd.read_csv("FRUTALES - EXCEL.xlsx - CRONOGRAMA.csv", header=5)
+        
+        # Limpieza básica
+        df = df.dropna(subset=['FECHA'])
+        df['FECHA'] = pd.to_datetime(df['FECHA'])
+        
+        # Buscar la fila de hoy
+        task_row = df[df['FECHA'] == fecha_hoy]
+        
+        if task_row.empty:
+            return "No hay tarea de fertilización programada en el CSV para hoy."
+
+        # Determinar la tarea
+        # (Los nombres de columna pueden tener espacios o 'Unnamed')
+        # Buscamos la primera columna de GRUPO que tenga un valor
+        if pd.notna(task_row.iloc[0, 7]): # Columna 'GRUPO 1' (Urea)
+            return "Fertilización Grupo 1"
+        elif pd.notna(task_row.iloc[0, 10]): # Columna 'GRUPO 2' (Sulf. Magnesio)
+            return "Fertilización Grupo 2"
+        elif pd.notna(task_row.iloc[0, 14]): # Columna 'GRUPO 3' (Boro)
+            return "Fertilización Grupo 3"
+        elif pd.notna(task_row.iloc[0, 15]): # Columna 'GRUPO 4' (Nitrato Calcio)
+            return "Fertilización Grupo 4"
+        elif pd.notna(task_row.iloc[0, 16]): # Columna 'OBSERVACIÓN' (asumimos lavado si lo dice ahí)
+             if "LAVADO" in str(task_row.iloc[0, 16]).upper():
+                 return "Lavado de Sales"
+        
+        return "Riego (Sin grupo de fertilizante específico hoy)"
+
+    except FileNotFoundError:
+        st.error("Error: No se encontró el archivo 'FRUTALES - EXCEL.xlsx - CRONOGRAMA.csv'.")
+        st.info("Por favor, asegúrese de que el archivo CSV del cronograma esté en el mismo directorio que el script.")
+        return "ERROR AL CARGAR CRONOGRAMA"
+    except Exception as e:
+        st.error(f"Error al procesar el cronograma: {e}")
+        return "ERROR AL PROCESAR CRONOGRAMA"
+
+# Obtener fecha de hoy y tarea
+if TZ_PERU:
+    fecha_actual_peru = datetime.now(TZ_PERU).date()
+    # Convertir a datetime de pandas para comparación
+    fecha_hoy_pd = pd.to_datetime(fecha_actual_peru)
+    tarea_de_hoy = load_cronograma(fecha_hoy_pd)
+    st.session_state.tarea_de_hoy = tarea_de_hoy
+else:
+    st.error("No se pudo definir la zona horaria. La fecha puede ser incorrecta.")
+    st.session_state.tarea_de_hoy = "Indeterminada"
+
+st.header("Paso 1: Tarea Programada")
+st.info(f"Tarea para hoy ({fecha_actual_peru.strftime('%d/%m/%Y')}): **{st.session_state.tarea_de_hoy}**")
+
+
+# ======================================================================
+# PASO 2, 3 y 4: FORMULARIO UNIFICADO DE JORNADA
+# ======================================================================
+
+with st.form("jornada_form"):
     
-    # --- Grupo 2: Incompatibles (Calcio) ---
-    "Nitrato de Calcio": {"grupo": 2, "nutrientes": ["N", "Ca"]},
+    st.header("Paso 2: Prueba de Drenaje (Testigos)")
+    st.write("Ingrese los datos PROMEDIO de sus macetas testigo (6 de coco, 3 de cascarilla).")
+
+    col1, col2 = st.columns(2)
     
-    # --- Grupo 3: Manejo Especial (Magnesio) ---
-    "Sulfato de Magnesio": {"grupo": 3, "nutrientes": ["Mg", "S"]},
-    "Nitrato de Magnesio": {"grupo": 3, "nutrientes": ["N", "Mg"]},
+    with col1:
+        sustrato_testigo = st.radio(
+            "Sustrato del Testigo:",
+            ("Fibra de Coco", "Cascarilla de Arroz"),
+            horizontal=True,
+            key="sustrato_testigo"
+        )
+        testigo_vol_aplicado_ml = st.number_input(
+            "Volumen Aplicado (mL/maceta)", 
+            min_value=0.0, 
+            step=50.0, 
+            value=1000.0,
+            key="testigo_vol_aplicado_ml"
+        )
+        testigo_vol_drenado_ml = st.number_input(
+            "Volumen Drenado (mL/maceta)", 
+            min_value=0.0, 
+            step=10.0, 
+            value=250.0,
+            key="testigo_vol_drenado_ml"
+        )
+        meta_drenaje = st.number_input(
+            "Meta de Drenaje Objetivo (%)", 
+            min_value=0.0, 
+            max_value=100.0, 
+            value=25.0, 
+            step=1.0,
+            key="meta_drenaje"
+        )
 
-    # --- Ácidos (Grupo especial 0) ---
-    "Ácido Nítrico": {"grupo": 0, "nutrientes": ["N"]},
-    "Ácido Fosfórico": {"grupo": 0, "nutrientes": ["P"]},
-}
-
-# Listas filtradas para los menús desplegables
-PRODUCTOS_COMPATIBLES = sorted([f for f, d in FERTILIZANTES_DB.items() if d["grupo"] == 1 or d["grupo"] == 0])
-PRODUCTOS_INCOMPATIBLES = sorted([f for f, d in FERTILIZANTES_DB.items() if d["grupo"] == 2 or d["grupo"] == 3])
-
-# --- Inicializar Session State para productos ---
-if 'productos_compatibles' not in st.session_state:
-    st.session_state.productos_compatibles = []
-if 'productos_adicionales' not in st.session_state:
-    st.session_state.productos_adicionales = []
-
-# ======================================================================================
-# --- ESTRUCTURA DE PESTAÑAS: MÓDULO 1 Y MÓDULO 2 ---
-# ======================================================================================
-tab1, tab2 = st.tabs(["Preparar Solución Madre (Semanal)", "Registro de Riego Diario"])
-
-# ======================================================================================
-# MÓDULO 1: PREPARAR SOLUCIÓN MADRE (Pestaña 1)
-# ======================================================================================
-with tab1:
-    st.header("Módulo 1: Preparar Solución Madre (Bidón 200L)")
-    st.write("Use este formulario una vez por semana (o cada vez que prepare el bidón celeste) para registrar la mezcla base de productos compatibles.")
-
-    with st.form("solucion_madre_form", clear_on_submit=True):
-        st.subheader("1. Datos Generales de la Solución")
-        col1, col2 = st.columns(2)
-        with col1:
-            fecha_preparacion = st.date_input("Fecha de Preparación", datetime.now(TZ_PERU) if TZ_PERU else datetime.now())
-            nombre_solucion = st.text_input("Nombre o Apodo de la Solución", placeholder="Ej: Mezcla NPK Semana 43")
-        with col2:
-            volumen_total = st.number_input("Volumen Total de la Solución (Litros)", min_value=1.0, value=200.0)
-        
-        st.subheader("2. Mediciones del Agua (Antiguas)")
-        mcol1, mcol2 = st.columns(2)
-        with mcol1:
-            ph_agua_fuente = st.number_input("pH del Agua (Fuente)", min_value=0.0, value=7.0, step=0.1, format="%.2f")
-        with mcol2:
-            ce_agua_fuente = st.number_input("CE del Agua (Fuente) dS/m", min_value=0.0, value=0.5, step=0.1, format="%.2f")
-
-        st.subheader("3. Fertilizantes Compatibles (Grupo 1)")
-        
-        # --- Lógica para añadir productos dinámicamente ---
-        if 'num_compatibles' not in st.session_state:
-            st.session_state.num_compatibles = 1
-
-        def add_compatible():
-            st.session_state.num_compatibles += 1
-        
-        for i in range(st.session_state.num_compatibles):
-            pcol1, pcol2, pcol3 = st.columns([2, 1, 3])
-            with pcol1:
-                st.selectbox("Producto Compatible", PRODUCTOS_COMPATIBLES, key=f"comp_prod_{i}")
-            with pcol2:
-                st.number_input("Dosis (gramos)", min_value=0.0, step=10.0, key=f"comp_dosis_{i}")
-        st.button("Añadir otro producto compatible", on_click=add_compatible)
-        
-        st.subheader("4. Mediciones Finales (Nuevas)")
-        fcol1, fcol2 = st.columns(2)
-        with fcol1:
-            ph_final = st.number_input("pH Final de la Solución", min_value=0.0, max_value=14.0, value=5.5, step=0.1, format="%.2f")
-        with fcol2:
-            ce_final = st.number_input("CE Final de la Solución (dS/m)", min_value=0.0, value=1.5, step=0.1, format="%.2f")
-
-        # --- Botón de Envío del Módulo 1 ---
-        submitted_madre = st.form_submit_button("💾 Guardar Solución Madre")
-
-        if submitted_madre:
-            if not nombre_solucion:
-                st.warning("Por favor, ingrese un nombre o apodo para la solución.")
-            elif supabase:
-                # Recolectar productos
-                productos_json = []
-                for i in range(st.session_state.num_compatibles):
-                    producto_nombre = st.session_state[f"comp_prod_{i}"]
-                    producto_dosis = st.session_state[f"comp_dosis_{i}"]
-                    if producto_dosis > 0:
-                        productos_json.append({
-                            "producto": producto_nombre,
-                            "dosis_gramos_total": producto_dosis,
-                            "nutrientes": FERTILIZANTES_DB.get(producto_nombre, {}).get("nutrientes", [])
-                        })
-                
-                try:
-                    datos_para_insertar = {
-                        "fecha_preparacion": fecha_preparacion.strftime("%Y-%m-%d"),
-                        "nombre_solucion": nombre_solucion,
-                        "volumen_total_litros": volumen_total,
-                        "ph_agua_fuente": ph_agua_fuente,
-                        "ce_agua_fuente": ce_agua_fuente,
-                        "productos_compatibles": productos_json, # ¡Guardamos el JSON!
-                        "ph_final_solucion": ph_final,
-                        "ce_final_solucion": ce_final
-                    }
-                    supabase.table('Soluciones_Madre').insert(datos_para_insertar).execute()
-                    st.success(f"¡Solución Madre '{nombre_solucion}' guardada exitosamente!")
-                    st.session_state.num_compatibles = 1 # Reiniciar
-                except Exception as e:
-                    st.error(f"Error al guardar en Supabase (Soluciones_Madre): {e}")
-
-# ======================================================================================
-# MÓDULO 2: REGISTRO DE RIEGO DIARIO (Pestaña 2)
-# ======================================================================================
-with tab2:
-    st.header("Módulo 2: Registro de Riego Diario")
-    st.write("Use este formulario todos los días para registrar la aplicación de riego.")
-
-    # --- Cargar Soluciones Madre para el desplegable (Tu "idea bacán") ---
-    @st.cache_data(ttl=300)
-    def cargar_soluciones_madre():
-        if not supabase:
-            return {}
-        try:
-            response = supabase.table('Soluciones_Madre').select('id, nombre_solucion').order('fecha_preparacion', desc=True).limit(20).execute()
-            soluciones = response.data
-            # Crear un diccionario {Nombre: id}
-            return {s['nombre_solucion']: s['id'] for s in soluciones}
-        except Exception as e:
-            st.error(f"Error al cargar Soluciones Madre: {e}")
-            return {}
-
-    soluciones_madre_dict = cargar_soluciones_madre()
-    if not soluciones_madre_dict:
-        st.warning("No se encontraron Soluciones Madre. Por favor, registre una en la Pestaña 1.")
-        st.stop()
-
-    with st.form("riego_diario_form", clear_on_submit=True):
-        st.subheader("1. Datos Generales del Riego")
-        dcol1, dcol2 = st.columns(2)
-        with dcol1:
-            fecha_riego = st.date_input("Fecha del Riego", datetime.now(TZ_PERU) if TZ_PERU else datetime.now())
-        with dcol2:
-            # Hileras 1 y 2 (la 3 se fue)
-            sector_seleccionado = st.selectbox("Hilera Regada:", 
-                                               options=['Hilera 1 (21 Emerald)', 'Hilera 2 (23 Coco y Cascarilla)'])
-
-        st.subheader("2. Aplicación de Solución Madre")
-        scol1, scol2 = st.columns(2)
-        with scol1:
-            # ¡Tu "idea bacán" en acción!
-            solucion_nombre_sel = st.selectbox("Solución Madre Utilizada:", 
-                                               options=list(soluciones_madre_dict.keys()))
-        with scol2:
-            volumen_aplicado = st.number_input("Volumen de Sol. Madre Aplicado (Litros)", min_value=0.0, step=1.0)
-
-        st.subheader("3. Aplicación Adicional (Incompatibles - Grupo 2/3)")
-        
-        # --- Lógica para añadir productos adicionales ---
-        if 'num_adicionales' not in st.session_state:
-            st.session_state.num_adicionales = 0 # Empezar en 0, solo añadir si es necesario
-
-        def add_adicional():
-            st.session_state.num_adicionales += 1
-        
-        if st.session_state.num_adicionales == 0:
-            st.button("Añadir Producto Adicional (Ej: Calcio)", on_click=add_adicional)
-        else:
-            for i in range(st.session_state.num_adicionales):
-                pcol1, pcol2, pcol3 = st.columns([2, 1, 1])
-                with pcol1:
-                    st.selectbox("Producto Adicional/Incompatible", PRODUCTOS_INCOMPATIBLES, key=f"adic_prod_{i}")
-                with pcol2:
-                    st.number_input("Dosis (gramos)", min_value=0.0, step=1.0, key=f"adic_dosis_{i}")
-                with pcol3:
-                    st.number_input("Vol. Agua (L)", min_value=0.0, step=1.0, key=f"adic_vol_{i}", help="Volumen de agua usado para esta mezcla separada (ej: en balde)")
-        
-        st.subheader("4. Mediciones Finales (Opcional si es lo mismo que la S. Madre)")
-        fcol1, fcol2 = st.columns(2)
-        with fcol1:
-            ph_final_diario = st.number_input("pH Final (en punto de riego)", min_value=0.0, max_value=14.0, value=5.5, step=0.1, format="%.2f")
-        with fcol2:
-            ce_final_diario = st.number_input("CE Final (en punto de riego) (dS/m)", min_value=0.0, value=1.5, step=0.1, format="%.2f")
-
-        observaciones = st.text_area("Observaciones del Día:", placeholder="Ej: Se aplicó Calcio en balde separado. El bidón celeste sigue a 1/2 capacidad.")
-
-        # --- Botón de Envío del Módulo 2 ---
-        submitted_diario = st.form_submit_button("💾 Guardar Riego del Día")
-
-        if submitted_diario:
-            if not solucion_nombre_sel:
-                st.warning("Debe seleccionar una Solución Madre.")
-            elif supabase:
-                # Recolectar productos adicionales
-                productos_adicionales_json = []
-                for i in range(st.session_state.num_adicionales):
-                    producto_nombre = st.session_state[f"adic_prod_{i}"]
-                    producto_dosis = st.session_state[f"adic_dosis_{i}"]
-                    producto_vol = st.session_state[f"adic_vol_{i}"]
-                    if producto_dosis > 0:
-                        productos_adicionales_json.append({
-                            "producto": producto_nombre,
-                            "dosis_gramos": producto_dosis,
-                            "volumen_agua_litros": producto_vol,
-                            "nutrientes": FERTILIZANTES_DB.get(producto_nombre, {}).get("nutrientes", [])
-                        })
-                
-                try:
-                    datos_para_insertar = {
-                        "Fecha": fecha_riego.strftime("%Y-%m-%d"),
-                        "Sector": sector_seleccionado,
-                        "id_solucion_madre": soluciones_madre_dict[solucion_nombre_sel], # ¡Guardamos el ID!
-                        "volumen_total_aplicado_litros": volumen_aplicado,
-                        "productos_adicionales_incompatibles": productos_adicionales_json, # ¡Guardamos el JSON!
-                        "pH_final": ph_final_diario,
-                        "CE_final": ce_final_diario,
-                        "Observaciones": observaciones
-                    }
-                    supabase.table('Riego_Registros').insert(datos_para_insertar).execute()
-                    st.success(f"¡Riego diario para '{sector_seleccionado}' guardado exitosamente!")
-                    st.session_state.num_adicionales = 0 # Reiniciar
-                except Exception as e:
-                    st.error(f"Error al guardar en Supabase (Riego_Registros): {e}")
-
-    # --- Mostrar últimos registros ---
-    st.divider()
-    st.subheader("Últimos Riegos Diarios Registrados")
-    @st.cache_data(ttl=60)
-    def cargar_riegos_diarios():
-        try:
-            response = supabase.table('Riego_Registros').select("*").order('Fecha', desc=True).limit(10).execute()
-            return pd.DataFrame(response.data)
-        except Exception as e:
-            st.error(f"Error al cargar historial de riegos: {e}")
-            return pd.DataFrame()
-
-    df_riegos = cargar_riegos_diarios()
-    if not df_riegos.empty:
-        st.dataframe(df_riegos, use_container_width=True)
+    # --- Cálculo y Recomendación Dinámica ---
+    if testigo_vol_aplicado_ml > 0:
+        testigo_porc_drenaje = (testigo_vol_drenado_ml / testigo_vol_aplicado_ml) * 100
     else:
-        st.info("Aún no hay registros de riegos diarios.")
+        testigo_porc_drenaje = 0.0
+    
+    with col2:
+        st.metric("Drenaje Alcanzado", f"{testigo_porc_drenaje:.1f}%")
+        
+        if testigo_vol_aplicado_ml == 0:
+            st.info("Ingrese un volumen aplicado para calcular.")
+        elif abs(testigo_porc_drenaje - meta_drenaje) < 5: # Rango de +/- 5%
+            st.success(f"✅ DRENAJE ÓPTIMO. El {testigo_porc_drenaje:.1f}% está cerca de la meta ({meta_drenaje}%).")
+            st.session_state.recomendacion_volumen = testigo_vol_aplicado_ml
+        elif testigo_porc_drenaje < meta_drenaje:
+            st.warning(f"⚠️ DRENAJE INSUFICIENTE. El {testigo_porc_drenaje:.1f}% está por debajo de la meta ({meta_drenaje}%). Considere aumentar el volumen para lavar sales.")
+            st.session_state.recomendacion_volumen = testigo_vol_aplicado_ml
+        else:
+            st.warning(f"⚠️ DRENAJE EXCESIVO. El {testigo_porc_drenaje:.1f}% está muy por encima de la meta ({meta_drenaje}%). Considere reducir el volumen.")
+            st.session_state.recomendacion_volumen = testigo_vol_aplicado_ml
 
+    st.divider()
+
+    # --- Paso 3: Mediciones ---
+    st.header("Paso 3: Mediciones (Drenaje y Riego)")
+    mcol1, mcol2 = st.columns(2)
+
+    with mcol1:
+        st.subheader("Medición del Drenaje (Lixiviado)")
+        testigo_ph_drenaje = st.number_input("pH del Drenaje", min_value=0.0, max_value=14.0, value=6.0, step=0.1, format="%.2f", key="testigo_ph_drenaje")
+        testigo_ce_drenaje = st.number_input("CE del Drenaje (dS/m)", min_value=0.0, value=1.8, step=0.1, format="%.2f", key="testigo_ce_drenaje")
+
+    with mcol2:
+        st.subheader("Agua de Origen (Pozo/Canal)")
+        fuente_ph = st.number_input("pH Agua Origen", min_value=0.0, max_value=14.0, value=7.5, step=0.1, format="%.2f", key="fuente_ph")
+        fuente_ce = st.number_input("CE Agua Origen (dS/m)", min_value=0.0, value=0.8, step=0.1, format="%.2f", key="fuente_ce")
+
+    st.divider()
+    
+    # --- Paso 4: Registro General ---
+    st.header("Paso 4: Registro General de la Jornada")
+    
+    rcol1, rcol2 = st.columns(2)
+    with rcol1:
+        st.subheader("Mezcla Final (Bidón)")
+        mezcla_ph_final = st.number_input("pH Mezcla Final", min_value=0.0, max_value=14.0, value=5.8, step=0.1, format="%.2f", key="mezcla_ph_final")
+        mezcla_ce_final = st.number_input("CE Mezcla Final (dS/m)", min_value=0.0, value=2.0, step=0.1, format="%.2f", key="mezcla_ce_final")
+    
+    with rcol2:
+        st.subheader("Volumen y Notas")
+        # Sugerir volumen total (44 plantas * volumen recomendado)
+        vol_sugerido = (st.session_state.get('recomendacion_volumen', 1000) * 44) / 1000 # 44 plantas (28+16)
+        
+        general_vol_aplicado_litros = st.number_input(
+            "Volumen Total Aplicado (Litros)", 
+            min_value=0.0, 
+            value=vol_sugerido, 
+            step=1.0, 
+            format="%.1f",
+            key="general_vol_aplicado_litros"
+        )
+    
+    observaciones = st.text_area(
+        "Observaciones y Productos Aplicados:", 
+        placeholder=f"Ej: Se aplicó {st.session_state.tarea_de_hoy}. El drenaje de cascarilla fue X. Todo normal.",
+        key="observaciones"
+    )
+
+    # --- Botón de Envío ---
+    submitted = st.form_submit_button("💾 Guardar Jornada Completa")
+
+# --- Lógica de Guardado ---
+if submitted:
+    if not supabase:
+        st.error("Error fatal: No hay conexión con Supabase.")
+    elif testigo_vol_aplicado_ml == 0:
+        st.warning("No se puede guardar: El 'Volumen Aplicado (mL/maceta)' no puede ser cero.")
+    else:
+        try:
+            # Recalcular el porcentaje de drenaje para asegurar
+            testigo_porc_drenaje_final = (testigo_vol_drenado_ml / testigo_vol_aplicado_ml) * 100
+            
+            datos_para_insertar = {
+                "fecha": fecha_actual_peru.strftime("%Y-%m-%d"),
+                "sustrato_testigo": sustrato_testigo,
+                "tarea_del_dia": st.session_state.tarea_de_hoy,
+                "testigo_vol_aplicado_ml": testigo_vol_aplicado_ml,
+                "testigo_vol_drenado_ml": testigo_vol_drenado_ml,
+                "testigo_porc_drenaje": testigo_porc_drenaje_final,
+                "testigo_ph_drenaje": testigo_ph_drenaje,
+                "testigo_ce_drenaje": testigo_ce_drenaje,
+                "general_vol_aplicado_litros": general_vol_aplicado_litros,
+                "fuente_ph": fuente_ph,
+                "fuente_ce": fuente_ce,
+                "mezcla_ph_final": mezcla_ph_final,
+                "mezcla_ce_final": mezcla_ce_final,
+                "observaciones": observaciones
+            }
+            
+            # Insertar en la NUEVA tabla 'Jornada_Riego'
+            supabase.table('Jornada_Riego').insert(datos_para_insertar).execute()
+            
+            st.success("¡Jornada de riego guardada exitosamente en la tabla 'Jornada_Riego'!")
+            st.balloons()
+
+        except Exception as e:
+            st.error(f"Error al guardar en Supabase: {e}")
+
+
+# ======================================================================
+# SECCIÓN DE HISTORIAL Y GRÁFICOS (Adaptado de drenaje.py)
+# ======================================================================
+st.divider()
+st.header("Historial y Tendencias de la Jornada")
+
+@st.cache_data(ttl=300) # Cachear por 5 minutos
+def cargar_datos_jornada():
+    if not supabase:
+        return pd.DataFrame()
+    try:
+        # Leer de la NUEVA tabla 'Jornada_Riego'
+        response = supabase.table('Jornada_Riego').select("*").order('fecha', desc=True).limit(100).execute()
+        df = pd.DataFrame(response.data)
+        if not df.empty:
+            df['fecha'] = pd.to_datetime(df['fecha'])
+        return df
+    except Exception as e:
+        st.error(f"No se pudieron cargar los datos del historial: {e}")
+        return pd.DataFrame()
+
+df_historial = cargar_datos_jornada()
+
+if df_historial.empty:
+    st.info("Aún no hay registros en 'Jornada_Riego'.")
+else:
+    st.write("Últimas jornadas registradas:")
+    st.dataframe(df_historial, use_container_width=True)
+
+    st.subheader("Gráficos de Tendencias")
+    
+    # Gráficos de Drenaje (Testigos)
+    gcol1, gcol2 = st.columns(2)
+    with gcol1:
+        fig_ph_drenaje = px.line(df_historial, x='fecha', y='testigo_ph_drenaje', color='sustrato_testigo',
+                                 title="Evolución del pH en Drenaje (Testigo)", markers=True)
+        st.plotly_chart(fig_ph_drenaje, use_container_width=True)
+    with gcol2:
+        fig_ce_drenaje = px.line(df_historial, x='fecha', y='testigo_ce_drenaje', color='sustrato_testigo',
+                                 title="Evolución de la CE en Drenaje (Testigo)", markers=True)
+        st.plotly_chart(fig_ce_drenaje, use_container_width=True)
+
+    # Gráficos de Mezcla Final (Bidón)
+    gcol3, gcol4 = st.columns(2)
+    with gcol3:
+        fig_ph_mezcla = px.line(df_historial, x='fecha', y='mezcla_ph_final',
+                                title="pH de la Mezcla Final Aplicada", markers=True)
+        st.plotly_chart(fig_ph_mezcla, use_container_width=True)
+    with gcol4:
+        fig_ce_mezcla = px.line(df_historial, x='fecha', y='mezcla_ce_final',
+                                title="CE de la Mezcla Final Aplicada", markers=True)
+        st.plotly_chart(fig_ce_mezcla, use_container_width=True)
