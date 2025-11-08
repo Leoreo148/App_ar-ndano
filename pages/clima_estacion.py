@@ -91,6 +91,11 @@ if uploaded_file is not None:
             columnas_existentes = [col for col in columnas_para_subir if col in df_renamed.columns]
             df_final = df_renamed[columnas_existentes]
             
+            # --- CORRECCIÓN AQUÍ ---
+            # Convertir los objetos 'Timestamp' de Python a strings en formato ISO
+            # antes de enviarlos a Supabase (que espera JSON).
+            df_final['timestamp'] = df_final['timestamp'].apply(lambda x: x.isoformat())
+
             # 6. Convertir a un formato de diccionario para Supabase
             records_to_insert = df_final.to_dict('records')
             
