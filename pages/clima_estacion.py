@@ -84,6 +84,21 @@ if uploaded_file is not None:
             # 3. Renombrar las columnas para que coincidan con Supabase
             df_renamed = df.rename(columns=COLUMNS_MAP)
             
+            # --- NUEVA CORRECCIÓN: Limpiar datos no numéricos ---
+            # Lista de columnas que deben ser numéricas (todas las del map, excepto 'direccion_viento')
+            numeric_cols = [
+                'temperatura_out', 'humedad_out', 'velocidad_viento', 
+                'radiacion_solar', 'uv_index', 'lluvia_rate'
+            ]
+            
+            for col in numeric_cols:
+                if col in df_renamed.columns:
+                    # pd.to_numeric con errors='coerce' es la clave.
+                    # Convertirá '19.3' a 19.3 (número)
+                    # Convertirá '---' a NaN (que se guarda como NULL en Supabase)
+                    # Convertirá '84' a 84.0 (número)
+                    df_renamed[col] = pd.to_numeric(df_renamed[col], errors='coerce')
+
             # 4. Seleccionar solo las columnas que necesitamos para Supabase
             columnas_para_subir = ['timestamp'] + list(COLUMNS_MAP.values())
             
