@@ -37,8 +37,9 @@ st.write("Flujo completo para registrar la prueba de drenaje, las mediciones y l
 @st.cache_data(ttl=600) # Cachear por 10 minutos
 def load_cronograma(fecha_hoy):
     try:
-        # Cargar el CSV. Asumimos que las cabeceras útiles empiezan en la fila 6 (índice 5)
-        df = pd.read_csv("FRUTALES - EXCEL.xlsx - CRONOGRAMA.csv", header=5)
+        # --- CORRECCIÓN AQUÍ ---
+        # Añadimos "../" para que busque el archivo un nivel arriba (en la raíz del proyecto)
+        df = pd.read_csv("../FRUTALES - EXCEL.xlsx - CRONOGRAMA.csv", header=5)
         
         # Limpieza básica
         df = df.dropna(subset=['FECHA'])
@@ -68,8 +69,8 @@ def load_cronograma(fecha_hoy):
         return "Riego (Sin grupo de fertilizante específico hoy)"
 
     except FileNotFoundError:
-        st.error("Error: No se encontró el archivo 'FRUTALES - EXCEL.xlsx - CRONOGRAMA.csv'.")
-        st.info("Por favor, asegúrese de que el archivo CSV del cronograma esté en el mismo directorio que el script.")
+        st.error("Error: No se encontró el archivo '../FRUTALES - EXCEL.xlsx - CRONOGRAMA.csv'.")
+        st.info("Por favor, asegúrese de que el archivo CSV del cronograma esté en la carpeta raíz del proyecto (fuera de 'pages').")
         return "ERROR AL CARGAR CRONOGRAMA"
     except Exception as e:
         st.error(f"Error al procesar el cronograma: {e}")
@@ -182,7 +183,7 @@ with st.form("jornada_form"):
     with rcol2:
         st.subheader("Volumen y Notas")
         # Sugerir volumen total (44 plantas * volumen recomendado)
-        vol_sugerido = (st.session_state.get('recomendacion_volumen', 1000) * 44) / 1000 # 44 plantas (28+16)
+        vol_sugerido = (st.session_state.get('recomendacion_volumen', 1000) * 44) / 1000 # 44 plantas (21+23 -> Asumí 21 y 23)
         
         general_vol_aplicado_litros = st.number_input(
             "Volumen Total Aplicado (Litros)", 
@@ -258,6 +259,7 @@ def cargar_datos_jornada():
             df['fecha'] = pd.to_datetime(df['fecha'])
         return df
     except Exception as e:
+        # AHORA EL ERROR DE LA TABLA APARECERÁ AQUÍ
         st.error(f"No se pudieron cargar los datos del historial: {e}")
         return pd.DataFrame()
 
