@@ -29,17 +29,37 @@ except ImportError:
     TZ_PERU = None
 
 # ======================================================================
-# PASO 1: TAREA DEL DÍA (LEYENDO DEL CSV)
+# PASO 1: TAREA DEL DÍA (LEYENDO DEL EXCEL)
 # ======================================================================
 st.title("💧🧪 Jornada de Fertiriego y Drenaje")
 st.write("Flujo completo para registrar la prueba de drenaje, las mediciones y la jornada de riego.")
 
 @st.cache_data(ttl=600) # Cachear por 10 minutos
 def load_cronograma(fecha_hoy):
+    # --- NOTA IMPORTANTE ---
+    # Para leer archivos Excel (.xlsx), pandas necesita la librería 'openpyxl'.
+    # Asegúrate de que esté en tu 'requirements.txt'.
+    # $ pip install openpyxl
+    
+    # El nombre del archivo Excel en la raíz
+    file_path = "FRUTALES - EXCEL.xlsx" 
+    # El nombre de la hoja (Sheet) que quieres leer
+    # Tu código original implicaba que se llamaba "CRONOGRAMA"
+    sheet_name = "CRONOGRAMA" 
+    
     try:
-        # --- CORRECCIÓN AQUÍ ---
-        # Añadimos "../" para que busque el archivo un nivel arriba (en la raíz del proyecto)
-        df = pd.read_csv("../FRUTALES - EXCEL.xlsx - CRONOGRAMA.csv", header=5)
+        # --- CORRECCIONES AQUÍ ---
+        # 1. Usamos pd.read_excel() para archivos .xlsx (NO read_csv).
+        # 2. El path es 'FRUTALES - EXCEL.xlsx' (directo en la raíz, sin '../').
+        #    Streamlit corre desde la raíz del proyecto (donde está Dashboard.py), 
+        #    por lo que no importa si este script está en 'pages'.
+        # 3. Especificamos la hoja con sheet_name.
+        # 4. header=5 significa que la fila 6 del Excel es la cabecera (inicia en 0).
+        df = pd.read_excel(
+            file_path, 
+            sheet_name=sheet_name, 
+            header=5
+        )
         
         # Limpieza básica
         df = df.dropna(subset=['FECHA'])
@@ -49,11 +69,12 @@ def load_cronograma(fecha_hoy):
         task_row = df[df['FECHA'] == fecha_hoy]
         
         if task_row.empty:
-            return "No hay tarea de fertilización programada en el CSV para hoy."
+            return "No hay tarea de fertilización programada en el Excel para hoy."
 
         # Determinar la tarea
         # (Los nombres de columna pueden tener espacios o 'Unnamed')
         # Buscamos la primera columna de GRUPO que tenga un valor
+        # NOTA: Confirma que estos índices (7, 10, 14...) siguen siendo correctos para tu Excel
         if pd.notna(task_row.iloc[0, 7]): # Columna 'GRUPO 1' (Urea)
             return "Fertilización Grupo 1"
         elif pd.notna(task_row.iloc[0, 10]): # Columna 'GRUPO 2' (Sulf. Magnesio)
@@ -63,17 +84,23 @@ def load_cronograma(fecha_hoy):
         elif pd.notna(task_row.iloc[0, 15]): # Columna 'GRUPO 4' (Nitrato Calcio)
             return "Fertilización Grupo 4"
         elif pd.notna(task_row.iloc[0, 16]): # Columna 'OBSERVACIÓN' (asumimos lavado si lo dice ahí)
-             if "LAVADO" in str(task_row.iloc[0, 16]).upper():
-                 return "Lavado de Sales"
+            if "LAVADO" in str(task_row.iloc[0, 16]).upper():
+                return "Lavado de Sales"
         
         return "Riego (Sin grupo de fertilizante específico hoy)"
 
     except FileNotFoundError:
-        st.error("Error: No se encontró el archivo '../FRUTALES - EXCEL.xlsx - CRONOGRAMA.csv'.")
-        st.info("Por favor, asegúrese de que el archivo CSV del cronograma esté en la carpeta raíz del proyecto (fuera de 'pages').")
+        # El error ahora buscará el archivo .xlsx correcto
+        st.error(f"Error: No se encontró el archivo '{file_path}'.")
+        st.info(f"Por favor, asegúrese de que el archivo '{file_path}' esté en la carpeta raíz del proyecto (junto a Dashboard.py).")
         return "ERROR AL CARGAR CRONOGRAMA"
     except Exception as e:
-        st.error(f"Error al procesar el cronograma: {e}")
+        # Esto podría atrapar un error si la hoja 'CRONOGRAMA' no existe
+        if "No sheet named" in str(e):
+             st.error(f"Error: Se encontró el archivo '{file_path}', pero no se encontró la hoja (sheet) llamada '{sheet_name}'.")
+        else:
+            st.error(f"Error al procesar el cronograma desde Excel: {e}")
+        st.info("Asegúrese también de tener 'openpyxl' instalado: pip install openpyxl")
         return "ERROR AL PROCESAR CRONOGRAMA"
 
 # Obtener fecha de hoy y tarea
@@ -183,7 +210,7 @@ with st.form("jornada_form"):
     with rcol2:
         st.subheader("Volumen y Notas")
         # Sugerir volumen total (44 plantas * volumen recomendado)
-        vol_sugerido = (st.session_state.get('recomendacion_volumen', 1000) * 44) / 1000 # 44 plantas (21+23 -> Asumí 21 y 23)
+        vol_sugerido = (st.session_state.get('recomendacion_volumen', 1000) * 44) / 1000 # 44 plantas
         
         general_vol_aplicado_litros = st.number_input(
             "Volumen Total Aplicado (Litros)", 
@@ -288,9 +315,9 @@ else:
     gcol3, gcol4 = st.columns(2)
     with gcol3:
         fig_ph_mezcla = px.line(df_historial, x='fecha', y='mezcla_ph_final',
-                                title="pH de la Mezcla Final Aplicada", markers=True)
+                                 title="pH de la Mezcla Final Aplicada", markers=True)
         st.plotly_chart(fig_ph_mezcla, use_container_width=True)
     with gcol4:
         fig_ce_mezcla = px.line(df_historial, x='fecha', y='mezcla_ce_final',
-                                title="CE de la Mezcla Final Aplicada", markers=True)
+                                 title="CE de la Mezcla Final Aplicada", markers=True)
         st.plotly_chart(fig_ce_mezcla, use_container_width=True)
