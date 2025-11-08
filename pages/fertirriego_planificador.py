@@ -4,7 +4,7 @@ import plotly.express as px
 from datetime import datetime
 from supabase import create_client
 import pytz # Para manejar la zona horaria
-import os # <-- IMPORTANTE: Lo usaremos para la ruta
+import os # Para comprobar si el archivo existe
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Jornada de Fertiriego", page_icon="💧🧪", layout="wide")
@@ -35,46 +35,23 @@ except ImportError:
 st.title("💧🧪 Jornada de Fertiriego y Drenaje")
 st.write("Flujo completo para registrar la prueba de drenaje, las mediciones y la jornada de riego.")
 
-# --- NUEVA LÓGICA DE RUTA (PATH) ROBUSTA ---
-try:
-    # Path al script actual (jornada_fertiriego.py)
-    SCRIPT_PATH = os.path.realpath(__file__)
-    # Path a la carpeta 'pages' que lo contiene
-    PAGES_DIR = os.path.dirname(SCRIPT_PATH)
-    # Path a la carpeta raíz (un nivel "arriba" de 'pages')
-    ROOT_DIR = os.path.dirname(PAGES_DIR)
-    # Path completo al archivo Excel
-    FILE_PATH = os.path.join(ROOT_DIR, "FRUTALES - EXCEL.xlsx")
-    
-    # Comprobar si el archivo existe en esa ruta
-    if not os.path.exists(FILE_PATH):
-        st.error(f"Error: No se encontró el archivo Excel en la ruta calculada: {FILE_PATH}")
-        st.info("Asegúrate de que 'FRUTALES - EXCEL.xlsx' esté en la carpeta raíz, al mismo nivel que 'Dashboard.py'.")
-        FILE_PATH = None # Anula la ruta si no se encuentra
-        
-except NameError:
-    # Fallback para cuando se corre localmente y __file__ no está definido
-    FILE_PATH = "FRUTALES - EXCEL.xlsx"
-    if not os.path.exists(FILE_PATH):
-        st.error(f"Error: No se encontró el archivo '{FILE_PATH}' en la raíz.")
-        st.info("Ejecutando en modo fallback. Asegúrate de que el Excel esté en la raíz.")
-        FILE_PATH = None
-
+# --- RUTA SIMPLIFICADA ---
+# Streamlit corre desde la raíz del proyecto (donde está Dashboard.py).
+# La ruta correcta debería ser simplemente el nombre del archivo.
+FILE_PATH = "FRUTALES - EXCEL.xlsx"
 
 @st.cache_data(ttl=600) # Cachear por 10 minutos
 def load_cronograma(fecha_hoy):
     """
     Lee el cronograma desde el archivo en la raíz.
     """
-    if FILE_PATH is None:
-        return "ERROR: No se pudo determinar la ruta del archivo Excel."
-
+    
     # El nombre de la hoja (Sheet) que quieres leer.
     sheet_name = "CRONOGRAMA"
     
     try:
         # --- CORRECCIONES COMBINADAS ---
-        # 1. Usamos el FILE_PATH que calculamos
+        # 1. Usamos el FILE_PATH simple
         # 2. Usamos header=4 (que es la fila 5 del Excel)
         df = pd.read_excel(
             FILE_PATH, 
@@ -108,8 +85,9 @@ def load_cronograma(fecha_hoy):
         return "Riego (Sin grupo de fertilizante específico hoy)"
 
     except FileNotFoundError:
-        st.error(f"Error: No se encontró el archivo en la ruta: '{FILE_PATH}'.")
-        return "ERROR AL CARGAR CRONOGRAMA"
+        st.error(f"Error 'FileNotFoundError': No se encontró el archivo en la ruta: '{FILE_PATH}'.")
+        st.info("Asegúrate de que 'FRUTALES - EXCEL.xlsx' esté en la carpeta raíz (junto a Dashboard.py).")
+        return "ERROR: Archivo no encontrado"
     except KeyError as e:
         st.error(f"Error de 'KeyError': No se encontró la columna {e}. Revisa el Excel. ¿La cabecera está en la fila 5?")
         return f"ERROR: Falta la columna {e}"
@@ -122,7 +100,6 @@ def load_cronograma(fecha_hoy):
         return "ERROR AL PROCESAR CRONOGRAMA"
 
 # --- LÓGICA PRINCIPAL ---
-# Ahora la página carga directamente, sin 'if uploaded_file'
 if TZ_PERU:
     try:
         fecha_actual_peru = datetime.now(TZ_PERU).date()
