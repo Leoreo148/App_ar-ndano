@@ -212,50 +212,58 @@ with tab2:
 
     # --- NUEVO GRÁFICO: HEATMAP SEMANAL DE TEMPERATURA ---
     st.divider()
-    st.subheader("🌡️ Comparativa Semanal de Temperatura (Heatmap)")
-    st.write("Muestra la temperatura promedio para cada día de la semana, comparando semana a semana.")
+    # --- REEMPLAZADO: Gráfico de Heatmap por Gráfico de Barras Agrupado ---
+    st.subheader("📊 Comparativa Semanal de Fenología (Promedios)")
+    st.write("Compara el promedio de las métricas fenológicas por hilera, semana a semana.")
 
-    if not df_clima.empty and 'timestamp' in df_clima.columns:
-        # 1. Asegurarse que la temperatura es numérica
-        df_clima['temperatura_out'] = pd.to_numeric(df_clima['temperatura_out'], errors='coerce')
-        df_clima = df_clima.dropna(subset=['timestamp', 'temperatura_out'])
-
-        # 2. Extraer componentes de fecha
-        df_clima['dia_semana_num'] = df_clima['timestamp'].dt.weekday
-        df_clima['dia_semana_str'] = df_clima['timestamp'].dt.day_name()
-        df_clima['semana_del_anio'] = df_clima['timestamp'].dt.isocalendar().week.astype(str)
+    if not df_fenologia.empty and 'Fecha' in df_fenologia.columns:
+        # 1. Crear la columna 'Semana'
+        # 'isocalendar().week' es la forma correcta de obtener el número de semana
+        df_fenologia['Semana'] = 'Semana ' + df_fenologia['Fecha'].dt.isocalendar().week.astype(str)
         
-        # 3. Calcular la temperatura promedio por día y semana
-        heatmap_data = df_clima.groupby(
-            ['semana_del_anio', 'dia_semana_num', 'dia_semana_str']
-        )['temperatura_out'].mean().reset_index()
+        # 2. Selector para la métrica
+        metricas_comparacion = {
+            'Altura Promedio (cm)': 'Altura_Planta_cm',
+            'N° Brotes Promedio': 'Numero_Brotes',
+            'N° Yemas Promedio': 'Numero_Yemas',
+            'Diámetro Promedio (mm)': 'diametro_tallo_mm'
+        }
+        metrica_display_sem = st.selectbox(
+            "Seleccione la Métrica a Comparar Semanalmente:", 
+            options=list(metricas_comparacion.keys()),
+            key="selectbox_metrica_semanal"
+        )
+        col_metrica_sem = metricas_comparacion[metrica_display_sem]
 
-        # 4. Ordenar los días de la semana
-        dias_ordenados = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-        
-        if not heatmap_data.empty:
-            # 5. Crear el Heatmap (Gráfico de Matriz)
-            fig_heatmap = px.imshow(
-                heatmap_data,
-                x='semana_del_anio',
-                y='dia_semana_str',
-                z='temperatura_out',
-                color_continuous_scale='RdYlBu_r', # Rojo (caliente) a Azul (frío)
-                title="Temperatura Promedio por Día y Semana",
-                labels={
-                    'semana_del_anio': 'Semana del Año',
-                    'dia_semana_str': 'Día de la Semana',
-                    'temperatura_out': 'Temp. Promedio (°C)'
-                },
-                text_auto=".1f" # Mostrar el valor numérico con 1 decimal
-            )
+        # 3. Agrupar los datos por Semana e Hilera, y calcular el promedio de la métrica
+        if col_metrica_sem in df_fenologia.columns:
+            df_sem_agg = df_fenologia.groupby(
+                ['Semana', 'Hilera']
+            )[col_metrica_sem].mean().reset_index()
             
-            # Asegurar el orden correcto de los días en el eje Y
-            fig_heatmap.update_yaxes(categoryorder='array', categoryarray=dias_ordenados)
-            fig_heatmap.update_xaxes(title_text='Semana del Año')
-            
-            st.plotly_chart(fig_heatmap, use_container_width=True)
+            # Ordenar por semana para que el gráfico se vea bien
+            df_sem_agg = df_sem_agg.sort_values(by='Semana')
+
+            if not df_sem_agg.empty:
+                # 4. Crear el Gráfico de Barras Agrupado
+                fig_bar_semanal = px.bar(
+                    df_sem_agg,
+                    x="Semana",
+                    y=col_metrica_sem,
+                    color="Hilera",         # Agrupa por hilera
+                    barmode="group",        # Modo "agrupado"
+                    title=f"Comparativa Semanal de {metrica_display_sem}",
+                    labels={
+                        col_metrica_sem: metrica_display_sem,
+                        "Semana": "Semana de Evaluación"
+                    },
+                    text_auto=".2f" # Muestra el valor en la barra
+                )
+                fig_bar_semanal.update_traces(textangle=0, textposition="outside")
+                st.plotly_chart(fig_bar_semanal, use_container_width=True)
+            else:
+                st.info(f"No se encontraron datos para la métrica '{metrica_display_sem}'.")
         else:
-            st.info("No hay suficientes datos de clima para generar el heatmap.")
+            st.warning(f"La métrica '{metrica_display_sem}' no existe en los datos de fenología.")
     else:
-        st.info("No se cargaron datos de la estación meteorológica para el análisis de heatmap.")
+        st.info("No se cargaron datos de fenología para el análisis semanal.")
