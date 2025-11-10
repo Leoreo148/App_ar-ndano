@@ -2,13 +2,12 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
-from supabase import create_client
 import pytz # Para manejar la zona horaria
-import io # Para leer el archivo de texto subido
+import os # Para comprobar si el archivo existe
+import re # Para limpiar nombres de columnas
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
-st.set_page_config(page_title="Dashboard de Clima", page_icon="🌦️", layout="wide")
-st.title("🌦️ Dashboard de la Estación Meteorológica")
+st.set_page_config(page_title="Estación Meteorológica", page_icon="🌦️", layout="wide")
 
 # --- CONEXIÓN A SUPABASE ---
 @st.cache_resource
@@ -31,141 +30,121 @@ except ImportError:
     TZ_PERU = None
 
 # ======================================================================
-# PASO 1: SUBIR NUEVOS DATOS
+# SECCIÓN DE CARGA DE DATOS
 # ======================================================================
-st.header("Paso 1: Cargar nuevos datos de la estación")
-st.write("Sube el archivo `.txt` descargado de la estación. Los datos se procesarán y guardarán en la base de datos.")
+st.title("🌦️ Dashboard de Estación Meteorológica")
+st.write("Sube el archivo de datos (`.txt`) de la estación para ingestar y analizar los datos climáticos.")
 
+# --- UPLOADER DE ARCHIVO ---
 uploaded_file = st.file_uploader(
-    "Selecciona el archivo .txt de la estación", 
+    "Sube tu archivo de datos de la estación (formato .txt)", 
     type=["txt"],
-    help="Sube el archivo de datos (separado por tabulaciones)"
+    help="Sube el archivo .txt separado por tabulaciones. El script se encargará de limpiarlo y subirlo a Supabase."
 )
 
-# --- Mapa de Columnas ---
-# (Nombre en TXT) : (Nombre en Supabase)
+# Mapa de columnas del .txt a la base de datos
 COLUMNS_MAP = {
-    'Out': 'temperatura_out',
-    'Hum': 'humedad_out',
-    'Speed': 'velocidad_viento',
-    'Dir': 'direccion_viento',
+    'Date': 'fecha', # Esta es temporal, se eliminará
+    'Time': 'hora',  # Esta es temporal, se eliminará
+    'Out Hum': 'humedad_out',
+    'Out Temp': 'temperatura_out',
+    'Wind Speed': 'velocidad_viento',
+    'Wind Dir': 'direccion_viento',
     'Solar Rad.': 'radiacion_solar',
     'UV Index': 'uv_index',
     'Rain Rate': 'lluvia_rate'
 }
 
 if uploaded_file is not None:
-    if not supabase:
-        st.error("No se puede procesar el archivo: Falla en la conexión con Supabase.")
-    else:
-        try:
-            # Leer el archivo de texto subido
-            # Usamos io.StringIO para tratar el texto subido como un archivo
-            string_data = io.StringIO(uploaded_file.getvalue().decode('utf-8'))
+    try:
+        with st.spinner(f"Procesando archivo '{uploaded_file.name}'... Esto puede tardar varios minutos."):
             
-            # Leemos con pandas:
-            # 1. sep='\t' -> Indicamos que el separador es una tabulación
-            # 2. header=1 -> Indicamos que la fila 2 (índice 1) es la cabecera real
-            df = pd.read_csv(string_data, sep='\t', header=1)
-            
-            st.success("Archivo leído. Procesando datos...")
+            # 1. Leer el archivo de texto separado por tabulaciones (tabs)
+            # Asumimos que la cabecera real está en la fila 2 (índice 1)
+            df = pd.read_csv(uploaded_file, sep='\t', header=1)
 
-            # --- Limpieza y Transformación ---
+            # 2. Renombrar las columnas para que coincidan con el MAPA
+            df = df.rename(columns=COLUMNS_MAP)
             
-            # 1. Crear el timestamp
-            # Combinamos 'Date' y 'Time'. 
-            # ¡¡IMPORTANTE!! Ajusta el formato 'dd/MM/yy' si tu fecha es diferente (ej: 'MM/dd/yy')
-            df['timestamp'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], format='%d/%m/%y %H:%M')
+            # --- LIMPIEZA DE DATOS ---
             
-            # 2. Asegurarnos que la zona horaria sea la de Perú (si está disponible)
-            if TZ_PERU:
-                df['timestamp'] = df['timestamp'].apply(lambda x: x.tz_localize(TZ_PERU))
-
-            # 3. Renombrar las columnas para que coincidan con Supabase
-            df_renamed = df.rename(columns=COLUMNS_MAP)
-            
-            # --- NUEVA CORRECCIÓN: Limpiar datos no numéricos ---
-            # Lista de columnas que deben ser numéricas (todas las del map, excepto 'direccion_viento')
+            # 3. Limpiar datos no numéricos ('---' -> NaN)
             numeric_cols = [
                 'temperatura_out', 'humedad_out', 'velocidad_viento', 
                 'radiacion_solar', 'uv_index', 'lluvia_rate'
             ]
-            
             for col in numeric_cols:
-                if col in df_renamed.columns:
-                    # pd.to_numeric con errors='coerce' es la clave.
-                    # Convertirá '19.3' a 19.3 (número)
-                    # Convertirá '---' a NaN (que se guarda como NULL en Supabase)
-                    # Convertirá '84' a 84.0 (número)
-                    df_renamed[col] = pd.to_numeric(df_renamed[col], errors='coerce')
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
 
-            # 4. Seleccionar solo las columnas que necesitamos para Supabase
-            columnas_para_subir = ['timestamp'] + list(COLUMNS_MAP.values())
+            # 4. Combinar 'fecha' y 'hora' en un 'timestamp'
+            # Asumimos que 'fecha' es dd/MM/yy y 'hora' es HH:mm
+            # ¡¡AJUSTA EL 'format' SI ES DIFERENTE!!
+            fecha_hora_str = df['fecha'] + ' ' + df['hora']
+            df['timestamp'] = pd.to_datetime(fecha_hora_str, format='%d/%m/%y %H:%M')
+
+            # 5. Seleccionar solo las columnas que necesitamos para Supabase
+            columnas_para_subir = ['timestamp'] + [col for col in COLUMNS_MAP.values() if col not in ['fecha', 'hora']]
+            columnas_existentes = [col for col in columnas_para_subir if col in df.columns]
+            df_final = df[columnas_existentes]
             
-            # 5. Filtrar solo las columnas que REALMENTE existen en el dataframe
-            columnas_existentes = [col for col in columnas_para_subir if col in df_renamed.columns]
-            df_final = df_renamed[columnas_existentes]
-            
-            # --- CORRECCIÓN AQUÍ ---
-            # Convertir los objetos 'Timestamp' de Python a strings en formato ISO
-            # antes de enviarlos a Supabase (que espera JSON).
+            # 6. Convertir Timestamps a string ISO para Supabase (JSON)
             df_final['timestamp'] = df_final['timestamp'].apply(lambda x: x.isoformat())
 
-            # --- NUEVA CORRECCIÓN (Paso B) ---
-            # Reemplazar los 'NaN' (creados por pd.to_numeric) con 'None' (que es compatible con JSON/null)
-            # Usamos .astype(object) para permitir 'None' en columnas numéricas
+            # 7. Reemplazar 'NaN' (de Python) con 'None' (de JSON)
             df_final = df_final.astype(object).where(pd.notnull(df_final), None)
 
-            # 6. Convertir a un formato de diccionario para Supabase
+            # 8. Convertir a un formato de diccionario para Supabase
             records_to_insert = df_final.to_dict('records')
             
-            # 7. Insertar en Supabase
-            # 'upsert=True' es vital: Si subes un archivo con datos de un minuto
-            # que ya existía, simplemente lo actualizará en lugar de duplicarlo.
-            # Esto depende de que 'timestamp' sea la Clave Primaria.
-            response = supabase.table('Datos_Estacion_Clima').upsert(records_to_insert, on_conflict='timestamp').execute()
-            
-            st.success(f"¡Datos guardados! Se procesaron {len(records_to_insert)} registros.")
-            st.write(f"Primeros 5 registros subidos:")
-            st.dataframe(df_final.head())
-            st.balloons()
+            if not records_to_insert:
+                st.warning("El archivo no contenía datos válidos para procesar.")
+            else:
+                st.write(f"Se procesaron {len(records_to_insert)} registros. Subiendo a Supabase...")
+                
+                # 9. Subir a Supabase con 'upsert'
+                # Esto inserta nuevos datos y actualiza los existentes (si el timestamp coincide)
+                response = supabase.table('Datos_Estacion_Clima').upsert(
+                    records_to_insert, 
+                    on_conflict='timestamp' # Requiere que 'timestamp' sea ÚNICO o PRIMARY KEY en Supabase
+                ).execute()
+                
+                st.success(f"¡Éxito! Se han subido y/o actualizado {len(records_to_insert)} registros en la base de datos.")
+                st.balloons()
+                # Limpiar la caché de los datos del historial para que se recargue
+                st.cache_data.clear()
 
-        except Exception as e:
-            st.error(f"Ocurrió un error al procesar el archivo: {e}")
-            st.warning("Verifica el formato del archivo. ¿Está separado por tabulaciones? ¿La cabecera está en la fila 2?")
-            st.warning("Verifica también que el formato de fecha en el script (línea 102) coincida con tu archivo (ej: 'dd/MM/yy').")
+    except Exception as e:
+        st.error(f"Ocurrió un error al procesar el archivo: {e}")
+        st.warning("Verifica el formato del archivo. ¿Está separado por tabulaciones? ¿La cabecera está en la fila 2?")
+        st.info("Verifica también que el formato de fecha en el script (línea 102) coincida con tu archivo (ej: 'dd/%m/%y').")
 
-
-# ======================================================================
-# PASO 2: VISUALIZAR DATOS (EL DASHBOARD)
-# ======================================================================
 st.divider()
-st.header("Paso 2: Analizar datos históricos")
 
-@st.cache_data(ttl=300) # Cachear por 5 minutos
-def cargar_datos_clima(start_date, end_date):
+# ======================================================================
+# SECCIÓN DE VISUALIZACIÓN DE DATOS
+# ======================================================================
+st.header("Visualización de Datos Climáticos")
+
+@st.cache_data(ttl=600) # Cachear datos por 10 minutos
+def cargar_datos_climaticos(start_date, end_date):
     """
-    Carga datos desde Supabase para el rango de fechas seleccionado.
+    Carga datos de Supabase para un rango de fechas.
     """
     if not supabase:
-        st.error("No se pueden cargar datos: Falla en la conexión con Supabase.")
+        st.error("No hay conexión con Supabase.")
         return pd.DataFrame()
     try:
-        # Asegurarnos que las fechas tengan zona horaria para la consulta
-        if TZ_PERU:
-            start_date_tz = TZ_PERU.localize(datetime.combine(start_date, datetime.min.time()))
-            end_date_tz = TZ_PERU.localize(datetime.combine(end_date, datetime.max.time()))
-        else:
-            start_date_tz = datetime.combine(start_date, datetime.min.time())
-            end_date_tz = datetime.combine(end_date, datetime.max.time())
-
-        # Consultar a Supabase por el rango de fechas
+        # Convertir fechas a strings ISO para la consulta
+        start_iso = start_date.isoformat()
+        end_iso = end_date.isoformat()
+        
         response = supabase.table('Datos_Estacion_Clima') \
-            .select("*") \
-            .gte('timestamp', start_date_tz.isoformat()) \
-            .lte('timestamp', end_date_tz.isoformat()) \
-            .order('timestamp', desc=False) \
-            .execute()
+                           .select("*") \
+                           .gte('timestamp', start_iso) \
+                           .lte('timestamp', end_iso) \
+                           .order('timestamp', desc=False) \
+                           .execute()
         
         if response.data:
             df = pd.DataFrame(response.data)
@@ -173,86 +152,82 @@ def cargar_datos_clima(start_date, end_date):
             return df
         else:
             return pd.DataFrame()
-            
     except Exception as e:
-        st.error(f"No se pudieron cargar los datos del historial: {e}")
+        st.error(f"Error al cargar datos del historial: {e}")
         return pd.DataFrame()
 
 # --- Selectores de Fecha ---
-st.write("Selecciona el rango de fechas que quieres analizar (ej: esta semana).")
+today = datetime.now(TZ_PERU).date()
 col_f1, col_f2 = st.columns(2)
 with col_f1:
-    # Fecha de inicio (por defecto, hace 7 días)
-    fecha_inicio = st.date_input("Fecha de Inicio", datetime.now() - pd.Timedelta(days=7))
+    start_date = st.date_input("Fecha de Inicio", today - pd.Timedelta(days=7), max_value=today)
 with col_f2:
-    # Fecha de fin (por defecto, hoy)
-    fecha_fin = st.date_input("Fecha de Fin", datetime.now())
+    end_date = st.date_input("Fecha de Fin", today, min_value=start_date, max_value=today)
 
-if fecha_inicio > fecha_fin:
-    st.error("La fecha de inicio no puede ser posterior a la fecha de fin.")
+# Convertir a datetime para la consulta (inicio del día y fin del día)
+start_datetime = datetime.combine(start_date, datetime.min.time()).astimezone(TZ_PERU)
+end_datetime = datetime.combine(end_date, datetime.max.time()).astimezone(TZ_PERU)
+
+df_datos = cargar_datos_climaticos(start_datetime, end_datetime)
+
+if df_datos.empty:
+    st.info("No se encontraron datos para el rango de fechas seleccionado. Sube un archivo o ajusta las fechas.")
 else:
-    # Cargar los datos para el rango seleccionado
-    df_clima = cargar_datos_clima(fecha_inicio, fecha_fin)
+    st.success(f"Mostrando {len(df_datos)} registros por minuto entre {start_date.strftime('%d/%m')} y {end_date.strftime('%d/%m')}.")
     
-    if df_clima.empty:
-        st.info("No se encontraron datos de la estación meteorológica en Supabase para este rango de fechas.")
-    else:
-        st.success(f"Cargando {len(df_clima)} registros para el análisis.")
-        
-        # --- Gráficos de Picos (Velocidad de Viento y Humedad) ---
-        st.subheader("Picos de Velocidad de Viento y Humedad")
-        
-        col_g1, col_g2 = st.columns(2)
-        with col_g1:
-            fig_viento = px.line(df_clima, x='timestamp', y='velocidad_viento', 
-                                 title="Picos de Velocidad de Viento (km/h)",
-                                 labels={'timestamp': 'Fecha y Hora', 'velocidad_viento': 'Velocidad (km/h)'})
-            fig_viento.update_traces(line_color='#1f77b4')
-            st.plotly_chart(fig_viento, use_container_width=True)
-            
-        with col_g2:
-            fig_humedad = px.line(df_clima, x='timestamp', y='humedad_out', 
-                                  title="Picos de Humedad (%)",
-                                  labels={'timestamp': 'Fecha y Hora', 'humedad_out': 'Humedad (%)'})
-            fig_humedad.update_traces(line_color='#2ca02c')
-            st.plotly_chart(fig_humedad, use_container_width=True)
+    # --- CORRECCIÓN GRÁFICOS: Preparar datos ---
+    
+    # 1. Poner timestamp como índice para agrupar por hora
+    df_plot = df_datos.set_index('timestamp')
+    
+    # 2. Crear un DataFrame PROMEDIADO POR HORA para gráficos "suaves"
+    # 'H' significa 'Hourly' (por hora). .mean() calcula el promedio.
+    df_hourly = df_plot.resample('H').mean(numeric_only=True)
+    df_hourly = df_hourly.reset_index() # Devolver 'timestamp' a una columna para Plotly
 
-        # --- Análisis de Dirección de Viento ---
-        st.subheader("Análisis de Viento")
-        
-        # Calcular la velocidad máxima y la dirección promedio
-        max_viento = df_clima['velocidad_viento'].max()
-        avg_viento = df_clima['velocidad_viento'].mean()
-        
-        # Contar las direcciones
-        df_dir_viento = df_clima['direccion_viento'].value_counts().reset_index()
-        df_dir_viento.columns = ['Dirección', 'Conteo']
+    # 3. Crear un DataFrame de CONTEO para la dirección del viento
+    df_wind_dir = df_plot['direccion_viento'].value_counts().reset_index()
+    df_wind_dir.columns = ['direccion', 'conteo']
 
-        col_m1, col_m2, col_g3 = st.columns([1, 1, 2])
-        with col_m1:
-            st.metric("Velocidad Máx. de Viento", f"{max_viento:.1f} km/h")
-        with col_m2:
-            st.metric("Velocidad Prom. de Viento", f"{avg_viento:.1f} km/h")
-        with col_g3:
-            fig_dir = px.bar(df_dir_viento, x='Dirección', y='Conteo',
-                             title="Dirección del Viento Dominante (Conteo)",
-                             labels={'Conteo': 'Registros (por minuto)'})
-            st.plotly_chart(fig_dir, use_container_width=True)
-            
-        # --- Otros Gráficos (Temperatura y Radiación) ---
-        st.subheader("Temperatura y Radiación Solar")
-        col_g4, col_g5 = st.columns(2)
-        
-        with col_g4:
-            fig_temp = px.line(df_clima, x='timestamp', y='temperatura_out', 
-                               title="Evolución de Temperatura (°C)",
-                               labels={'timestamp': 'Fecha y Hora', 'temperatura_out': 'Temperatura (°C)'})
-            fig_temp.update_traces(line_color='#d62728')
-            st.plotly_chart(fig_temp, use_container_width=True)
+    # --- Gráficos ---
+    st.subheader("Tendencias Horarias (Promedios)")
+    
+    gcol1, gcol2 = st.columns(2)
+    
+    with gcol1:
+        # Usamos df_hourly (datos por hora)
+        fig_viento = px.line(df_hourly, x='timestamp', y='velocidad_viento',
+                             title='Velocidad del Viento (Promedio por Hora)',
+                             labels={'velocidad_viento': 'Velocidad (km/h o m/s)', 'timestamp': 'Fecha y Hora'})
+        fig_viento.update_traces(line=dict(color='blue'))
+        st.plotly_chart(fig_viento, use_container_width=True)
 
-        with col_g5:
-            fig_rad = px.line(df_clima, x='timestamp', y='radiacion_solar', 
-                              title="Evolución de Radiación Solar (W/m²)",
-                              labels={'timestamp': 'Fecha y Hora', 'radiacion_solar': 'Radiación (W/m²)'})
-            fig_rad.update_traces(line_color='#ff7f0e')
-            st.plotly_chart(fig_rad, use_container_width=True)
+    with gcol2:
+        # Usamos df_hourly (datos por hora)
+        fig_humedad = px.line(df_hourly, x='timestamp', y='humedad_out',
+                              title='Humedad Exterior (Promedio por Hora)',
+                              labels={'humedad_out': 'Humedad (%)', 'timestamp': 'Fecha y Hora'})
+        fig_humedad.update_traces(line=dict(color='green'))
+        st.plotly_chart(fig_humedad, use_container_width=True)
+
+    gcol3, gcol4 = st.columns(2)
+
+    with gcol3:
+        # --- GRÁFICO CORREGIDO: Promedio por hora ---
+        # La radiación solar también se ve mejor promediada
+        fig_radiacion = px.line(df_hourly, x='timestamp', y='radiacion_solar',
+                                title='Radiación Solar (Promedio por Hora)',
+                                labels={'radiacion_solar': 'Radiación (W/m²)', 'timestamp': 'Fecha y Hora'})
+        fig_radiacion.update_traces(line=dict(color='orange'))
+        st.plotly_chart(fig_radiacion, use_container_width=True)
+
+    with gcol4:
+        # --- GRÁFICO CORREGIDO: BARRAS ---
+        # Usamos df_wind_dir (el conteo de direcciones)
+        fig_dir_viento = px.bar(df_wind_dir, x='direccion', y='conteo',
+                                title='Frecuencia Dirección del Viento',
+                                labels={'conteo': 'Número de Registros', 'direccion': 'Dirección'})
+        st.plotly_chart(fig_dir_viento, use_container_width=True)
+
+    st.subheader("Datos Crudos (Tabla)")
+    st.dataframe(df_datos, use_container_width=True)
