@@ -149,6 +149,18 @@ def cargar_datos_climaticos(start_date, end_date):
         if response.data:
             df = pd.DataFrame(response.data)
             df['timestamp'] = pd.to_datetime(df['timestamp'])
+            
+            # --- CORRECCIÓN DEL ERROR (ValueError en el gráfico) ---
+            # Forzar las columnas a ser numéricas DESPUÉS de cargarlas de Supabase.
+            # Pandas puede inferir 'object' (texto) si la columna contiene valores NULL,
+            # y 'mean(numeric_only=True)' las ignorará, causando el ValueError.
+            cols_to_convert = ['velocidad_viento', 'humedad_out', 'radiacion_solar', 'temperatura_out', 'uv_index', 'lluvia_rate']
+            for col in cols_to_convert:
+                if col in df.columns:
+                    # 'coerce' convierte cualquier error (ej. 'None') en NaN (Nulo numérico)
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            # --- FIN DE LA CORRECCIÓN ---
+            
             return df
         else:
             return pd.DataFrame()
