@@ -52,8 +52,9 @@ def cargar_y_calcular_crecimiento():
         return pd.DataFrame()
     
     try:
-        # El cliente de Supabase usa 'ascending=True' para orden ascendente
-        response = supabase.table('Fenologia_Arandano').select("*").order('Fecha', ascending=True).execute()
+        # --- CORRECCIÓN AQUÍ ---
+        # Cambiar 'ascending=True' por 'desc=False'
+        response = supabase.table('Fenologia_Arandano').select("*").order('Fecha', desc=False).execute()
         df = pd.DataFrame(response.data)
         
         if df.empty:
