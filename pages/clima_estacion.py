@@ -202,40 +202,49 @@ else:
     df_wind_dir.columns = ['direccion', 'conteo']
 
     # --- Gráficos ---
-    st.subheader("Tendencias Horarias (Promedios)")
+    st.subheader("Tendencias Climáticas (Promedios por Hora)")
     
-    gcol1, gcol2 = st.columns(2)
+    # --- CAMBIO: 3 columnas para los gráficos principales ---
+    gcol1, gcol2, gcol3 = st.columns(3)
     
     with gcol1:
-        # Usamos df_hourly (datos por hora)
+        # --- NUEVO GRÁFICO: Temperatura ---
+        fig_temp = px.line(df_hourly, x='timestamp', y='temperatura_out',
+                             title='Temperatura Exterior (Promedio por Hora)',
+                             labels={'temperatura_out': 'Temp (°C)', 'timestamp': 'Fecha y Hora'})
+        fig_temp.update_traces(line=dict(color='red'))
+        st.plotly_chart(fig_temp, use_container_width=True)
+
+    with gcol2:
+        # Gráfico Viento (Movido)
         fig_viento = px.line(df_hourly, x='timestamp', y='velocidad_viento',
                              title='Velocidad del Viento (Promedio por Hora)',
                              labels={'velocidad_viento': 'Velocidad (km/h o m/s)', 'timestamp': 'Fecha y Hora'})
         fig_viento.update_traces(line=dict(color='blue'))
         st.plotly_chart(fig_viento, use_container_width=True)
 
-    with gcol2:
-        # Usamos df_hourly (datos por hora)
+    with gcol3:
+        # Gráfico Humedad (Movido)
         fig_humedad = px.line(df_hourly, x='timestamp', y='humedad_out',
                               title='Humedad Exterior (Promedio por Hora)',
                               labels={'humedad_out': 'Humedad (%)', 'timestamp': 'Fecha y Hora'})
         fig_humedad.update_traces(line=dict(color='green'))
         st.plotly_chart(fig_humedad, use_container_width=True)
 
-    gcol3, gcol4 = st.columns(2)
+    # --- Nueva fila para los gráficos secundarios ---
+    st.subheader("Otras Métricas")
+    gcol4, gcol5 = st.columns(2)
 
-    with gcol3:
-        # --- GRÁFICO CORREGIDO: Promedio por hora ---
-        # La radiación solar también se ve mejor promediada
+    with gcol4:
+        # Gráfico Radiación (Movido)
         fig_radiacion = px.line(df_hourly, x='timestamp', y='radiacion_solar',
                                 title='Radiación Solar (Promedio por Hora)',
                                 labels={'radiacion_solar': 'Radiación (W/m²)', 'timestamp': 'Fecha y Hora'})
         fig_radiacion.update_traces(line=dict(color='orange'))
         st.plotly_chart(fig_radiacion, use_container_width=True)
 
-    with gcol4:
-        # --- GRÁFICO CORREGIDO: BARRAS ---
-        # Usamos df_wind_dir (el conteo de direcciones)
+    with gcol5:
+        # Gráfico Dirección Viento (Movido)
         fig_dir_viento = px.bar(df_wind_dir, x='direccion', y='conteo',
                                 title='Frecuencia Dirección del Viento',
                                 labels={'conteo': 'Número de Registros', 'direccion': 'Dirección'})
