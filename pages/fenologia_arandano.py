@@ -21,33 +21,14 @@ ETAPAS_FENOLOGICAS = [
     'Yema Hinchada', 'Punta Verde', 'Salida de Hojas', 
     'Hojas Extendidas', 'Inicio de Floración', 'Plena Flor', 
     'Caída de Pétalos', 'Fruto Verde', 'Pinta', 'Cosecha'
-]
 
 # --- Conexión a Supabase ---
 @st.cache_resource
 def init_supabase_connection():
     try:
-        url = st.secrets["SUPABASE_URL"]
-        key = st.secrets["SUPABASE_KEY"]
-        return create_client(url, key)
-    except Exception as e:
-        st.error(f"Error al conectar con Supabase: {e}")
-        return None
-
-supabase = init_supabase_connection()
-
-# --- Funciones de Datos ---
-@st.cache_data(ttl=60)
-def cargar_y_calcular_crecimiento():
-    """
-    Carga el historial de Supabase y calcula la Tasa de Crecimiento Diario (TCD).
-    """
-    if not supabase:
-        st.error("Error al cargar datos: No hay conexión con Supabase.")
-        return pd.DataFrame()
-    
-    try:
-        response = supabase.table('Fenologia_Arandano').select("*").order('Fecha', desc=False).execute()
+        # --- CORRECCIÓN AQUÍ ---
+        # El cliente de Supabase usa 'ascending=True' en lugar de 'desc=False'
+        response = supabase.table('Fenologia_Arandano').select("*").order('Fecha', ascending=True).execute()
         df = pd.DataFrame(response.data)
         
         if df.empty:
@@ -80,7 +61,8 @@ def cargar_y_calcular_crecimiento():
         # Limpiar valores infinitos si los hubiera
         df.replace([pd.NA, pd.NaT, float('inf'), float('-inf')], pd.NA, inplace=True)
         
-        return df.sort_values(by='Fecha', desc=True) # Devolver ordenado por fecha (más reciente primero)
+        # También cambiaré esto para ser 100% consistente con pandas
+        return df.sort_values(by='Fecha', ascending=False) # Devolver ordenado por fecha (más reciente primero)
 
     except Exception as e:
         st.error(f"Error al cargar o calcular el crecimiento: {e}")
