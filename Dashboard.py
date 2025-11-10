@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import datetime, timedelta
+import numpy as np # Necesario para el heatmap
 
 # --- LIBRERÍAS PARA LA CONEXIÓN A SUPABASE ---
 from supabase import create_client
@@ -9,7 +10,7 @@ from supabase import create_client
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Dashboard General", page_icon="📊", layout="wide")
 st.title("📊 Dashboard General del Cultivo de Arándano")
-st.write("Visión integral del estado del cultivo, basada en los datos de fenología, sanidad, riego y nutrición.")
+st.write("Visión integral del estado del cultivo, basada en los datos de fenología, sanidad y clima.")
 
 # --- CONEXIÓN A SUPABASE ---
 @st.cache_resource
@@ -30,8 +31,9 @@ def cargar_todos_los_datos():
     if not supabase:
         return { "error": "No se pudo conectar a Supabase." }
     
+    # --- MODIFICADO: Añadida la tabla 'Datos_Estacion_Clima' ---
     tablas = [
-        "Fenologia_Arandano", "Fitosanidad", "Mosca_Fruta_Monitoreo", "Riego_Registros"
+        "Fenologia_Arandano", "Fitosanidad", "Mosca_Fruta_Monitoreo", "Datos_Estacion_Clima"
     ]
     dataframes = {}
     try:
@@ -40,7 +42,8 @@ def cargar_todos_los_datos():
             dataframes[tabla] = pd.DataFrame(response.data)
         return dataframes
     except Exception as e:
-        st.error(f"Fallo al cargar la tabla '{tabla}': {e}")
+        # Si una tabla falla (ej. Riego_Registros ya no existe), no detenemos todo
+        st.warning(f"Fallo al cargar la tabla '{tabla}': {e}")
         dataframes[tabla] = pd.DataFrame()
         return dataframes
 
@@ -54,7 +57,8 @@ if "error" in datos:
 df_fenologia = datos.get("Fenologia_Arandano", pd.DataFrame())
 df_fitosanidad = datos.get("Fitosanidad", pd.DataFrame())
 df_mosca = datos.get("Mosca_Fruta_Monitoreo", pd.DataFrame())
-df_fertirriego = datos.get("Riego_Registros", pd.DataFrame())
+# --- NUEVO: Cargar datos de clima ---
+df_clima = datos.get("Datos_Estacion_Clima", pd.DataFrame())
 
 # --- PROCESAMIENTO DE DATOS (Limpieza y conversión de tipos) ---
 def procesar_fechas(df, nombre_col_fecha):
@@ -65,7 +69,9 @@ def procesar_fechas(df, nombre_col_fecha):
 df_fenologia = procesar_fechas(df_fenologia, 'Fecha')
 df_fitosanidad = procesar_fechas(df_fitosanidad, 'Fecha')
 df_mosca = procesar_fechas(df_mosca, 'Fecha')
-df_fertirriego = procesar_fechas(df_fertirriego, 'Fecha')
+# --- NUEVO: Procesar fechas de clima ---
+df_clima = procesar_fechas(df_clima, 'timestamp')
+
 
 # --- CORRECCIÓN DEFINITIVA: Asegurar que el número de planta sea numérico ---
 if not df_fenologia.empty and 'Numero_de_Planta' in df_fenologia.columns:
@@ -73,68 +79,13 @@ if not df_fenologia.empty and 'Numero_de_Planta' in df_fenologia.columns:
     df_fenologia.dropna(subset=['Numero_de_Planta'], inplace=True)
     df_fenologia['Numero_de_Planta'] = df_fenologia['Numero_de_Planta'].astype(int)
 
-# --- KPIs: MÉTRICAS CLAVE DEL CULTIVO ---
-st.header("Métricas Clave (Últimos Registros)")
-
-# Ordenar dataframes para asegurar que el último registro es el primero
-if not df_fertirriego.empty: df_fertirriego = df_fertirriego.sort_values('Fecha', ascending=False)
-if not df_fenologia.empty: df_fenologia = df_fenologia.sort_values('Fecha', ascending=False)
-if not df_fitosanidad.empty: df_fitosanidad = df_fitosanidad.sort_values('Fecha', ascending=False)
-if not df_mosca.empty: df_mosca = df_mosca.sort_values('Fecha', ascending=False)
-
-kpi_cols = st.columns(6)
-
-# KPI 1: Humedad del Sustrato (NUEVO)
-with kpi_cols[0]:
-    humedad_ultima = df_fertirriego['humedad_promedio_medida'].iloc[0] if not df_fertirriego.empty and 'humedad_promedio_medida' in df_fertirriego.columns else 0
-    st.metric("💧 Humedad Últ. Medición", f"{humedad_ultima:.1f}%", help="Promedio de la última medición de humedad del sustrato. Es el indicador clave para la decisión de riego.")
-
-# KPI 2: pH del último fertirriego
-with kpi_cols[1]:
-    ph_ultimo = df_fertirriego['pH_final'].iloc[0] if not df_fertirriego.empty and 'pH_final' in df_fertirriego.columns else 0
-    st.metric("💧 pH Último Riego", f"{ph_ultimo:.2f}", help="El pH de la solución nutritiva es crítico para la absorción de nutrientes. Rango ideal: 4.5 - 5.5")
-
-# KPI 3: CE del último fertirriego
-with kpi_cols[2]:
-    ce_ultima = df_fertirriego['CE_final'].iloc[0] if not df_fertirriego.empty and 'CE_final' in df_fertirriego.columns else 0
-    st.metric("⚡ CE Último Riego", f"{ce_ultima:.2f} dS/m", help="La Conductividad Eléctrica mide la salinidad. Ideal < 1.0 dS/m.")
-
-# KPI 4: Crecimiento Vegetativo (Diámetro del Tallo)
-with kpi_cols[3]:
-    diametro_promedio = 0
-    if not df_fenologia.empty:
-        ultima_eval_feno_fecha = df_fenologia['Fecha'].max()
-        ultima_eval_feno = df_fenologia[df_fenologia['Fecha'] == ultima_eval_feno_fecha]
-        diametro_promedio = ultima_eval_feno['diametro_tallo_mm'].mean()
-    st.metric("🌱 Diámetro Prom. Tallo", f"{diametro_promedio:.2f} mm", help="Promedio del diámetro del tallo en la última evaluación fenológica.")
-
-# KPI 5: Alerta Sanitaria
-with kpi_cols[4]:
-    plantas_con_sintomas = 0
-    if not df_fitosanidad.empty and 'Datos_Enfermedades' in df_fitosanidad.columns:
-        ultima_eval_fito = df_fitosanidad.iloc[0]
-        if ultima_eval_fito['Datos_Enfermedades']:
-            datos_enfermedades = pd.DataFrame(ultima_eval_fito['Datos_Enfermedades'])
-            if not datos_enfermedades.empty:
-                cols_sintomas = [col for col in datos_enfermedades.columns if col not in ['Planta']]
-                plantas_con_sintomas = datos_enfermedades[cols_sintomas].sum(axis=1).gt(0).sum()
-    st.metric("🔬 Plantas con Síntomas", f"{plantas_con_sintomas}", help="Número de plantas con alguna enfermedad registrada en la última evaluación.")
-
-# KPI 6: Alerta Mosca de la Fruta
-with kpi_cols[5]:
-    mtd_promedio = 0
-    if not df_mosca.empty:
-        df_mosca_semana = df_mosca[df_mosca['Fecha'] >= (datetime.now() - timedelta(days=7))]
-        if not df_mosca_semana.empty:
-            total_capturas = df_mosca_semana[['Ceratitis_capitata', 'Anastrepha_fraterculus', 'Anastrepha_distinta']].sum().sum()
-            num_trampas = df_mosca_semana['Numero_Trampa'].nunique()
-            mtd_promedio = total_capturas / num_trampas / 7 if num_trampas > 0 else 0
-    st.metric("🪰 MTD Semanal", f"{mtd_promedio:.2f}", help="Promedio de Moscas por Trampa por Día en la última semana.")
-
+# --- KPIs: MÉTRICAS CLAVE ELIMINADAS ---
+# (Se eliminó toda la sección de st.header("Métricas Clave...") y los kpi_cols)
 st.divider()
 
-# --- ESTRUCTURA DE PESTAÑAS PARA ORGANIZAR EL ANÁLISIS ---
-tab1, tab2, tab3 = st.tabs(["📊 Análisis Fenológico por Hilera", "💧 Análisis de Riego y Humedad", "📈 Tendencias Generales"])
+# --- ESTRUCTURA DE PESTAÑAS SIMPLIFICADA ---
+# --- MODIFICADO: Eliminada la Tab 2 de Riego ---
+tab1, tab2 = st.tabs(["📊 Análisis Fenológico por Hilera", "📈 Tendencias Generales"])
 
 # --- PESTAÑA 1 - WIDGET DE ANÁLISIS FENOLÓGICO DETALLADO ---
 with tab1:
@@ -210,10 +161,10 @@ with tab1:
                 st.info("No hay datos para la fecha seleccionada.")
 
 # --- PESTAÑA 2 - GRÁFICOS DE TENDENCIAS GENERALES ---
+# (Este era tu 'tab3', ahora es 'tab2')
 with tab2:
     st.header("Análisis de Tendencias Generales")
     
-    # --- MODIFICACIÓN: Se elimina la primera columna (gcol1) que contenía el gráfico de fertirriego ---
     st.subheader("🌱 Evolución Fenológica")
     if not df_fenologia.empty:
         # Agregamos todas las métricas que necesitamos calcular
@@ -258,3 +209,53 @@ with tab2:
             st.info("No hay capturas de mosca en los últimos 30 días.")
     else:
         st.info("Aún no hay registros de monitoreo de mosca.")
+
+    # --- NUEVO GRÁFICO: HEATMAP SEMANAL DE TEMPERATURA ---
+    st.divider()
+    st.subheader("🌡️ Comparativa Semanal de Temperatura (Heatmap)")
+    st.write("Muestra la temperatura promedio para cada día de la semana, comparando semana a semana.")
+
+    if not df_clima.empty and 'timestamp' in df_clima.columns:
+        # 1. Asegurarse que la temperatura es numérica
+        df_clima['temperatura_out'] = pd.to_numeric(df_clima['temperatura_out'], errors='coerce')
+        df_clima = df_clima.dropna(subset=['timestamp', 'temperatura_out'])
+
+        # 2. Extraer componentes de fecha
+        df_clima['dia_semana_num'] = df_clima['timestamp'].dt.weekday
+        df_clima['dia_semana_str'] = df_clima['timestamp'].dt.day_name()
+        df_clima['semana_del_anio'] = df_clima['timestamp'].dt.isocalendar().week.astype(str)
+        
+        # 3. Calcular la temperatura promedio por día y semana
+        heatmap_data = df_clima.groupby(
+            ['semana_del_anio', 'dia_semana_num', 'dia_semana_str']
+        )['temperatura_out'].mean().reset_index()
+
+        # 4. Ordenar los días de la semana
+        dias_ordenados = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        
+        if not heatmap_data.empty:
+            # 5. Crear el Heatmap (Gráfico de Matriz)
+            fig_heatmap = px.imshow(
+                heatmap_data,
+                x='semana_del_anio',
+                y='dia_semana_str',
+                z='temperatura_out',
+                color_continuous_scale='RdYlBu_r', # Rojo (caliente) a Azul (frío)
+                title="Temperatura Promedio por Día y Semana",
+                labels={
+                    'semana_del_anio': 'Semana del Año',
+                    'dia_semana_str': 'Día de la Semana',
+                    'temperatura_out': 'Temp. Promedio (°C)'
+                },
+                text_auto=".1f" # Mostrar el valor numérico con 1 decimal
+            )
+            
+            # Asegurar el orden correcto de los días en el eje Y
+            fig_heatmap.update_yaxes(categoryorder='array', categoryarray=dias_ordenados)
+            fig_heatmap.update_xaxes(title_text='Semana del Año')
+            
+            st.plotly_chart(fig_heatmap, use_container_width=True)
+        else:
+            st.info("No hay suficientes datos de clima para generar el heatmap.")
+    else:
+        st.info("No se cargaron datos de la estación meteorológica para el análisis de heatmap.")
