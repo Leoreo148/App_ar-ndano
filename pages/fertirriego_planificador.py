@@ -67,7 +67,6 @@ def load_cronograma(fecha_hoy):
         df['FECHA'] = pd.to_datetime(df['FECHA']).dt.date
         
         # --- [CORRECCIÓN PRINCIPAL] ---
-        # Aquí estaba el error de lógica e indentación.
         # Faltaba filtrar el dataframe por la fecha de hoy.
         
         task_row_df = df[df['FECHA'] == fecha_hoy]
@@ -118,9 +117,7 @@ if TZ_PERU:
         fecha_actual_peru = datetime.now(TZ_PERU).date()
         
         # --- [CORRECCIÓN DE OPTIMIZACIÓN] ---
-        # Eliminamos st.cache_data.clear()
         # Dejamos que @st.cache_data(ttl=600) haga su trabajo.
-        # Esto evita que el Excel se recargue en cada interacción del usuario.
         
         # Esta línea ahora funcionará
         tarea_de_hoy, datos_dosis = load_cronograma(fecha_actual_peru) 
@@ -351,4 +348,132 @@ else:
 
         with mcol2:
             st.subheader("Agua de Origen (Pozo/Canal)")
-            fuente_ph = st.number_input("pH Agua Origen", min_value=0.0, max_value=14.0, value=7.5, step=0.1, format="%.2f", key="
+            # --- [LÍNEA CORREGIDA/COMPLETADA] ---
+            fuente_ph = st.number_input("pH Agua Origen", min_value=0.0, max_value=14.0, value=7.5, step=0.1, format="%.2f", key="fuente_ph")
+            fuente_ce = st.number_input("CE Agua Origen (dS/m)", min_value=0.0, value=0.8, step=0.1, format="%.2f", key="fuente_ce")
+
+        st.divider()
+        st.subheader("Notas Adicionales")
+        observaciones = st.text_area(
+            "Observaciones:", 
+            placeholder=f"Ej: Se aplicó {st.session_state.tarea_de_hoy}. El drenaje de cascarilla fue X. Todo normal.",
+            key="observaciones"
+        )
+
+        # --- Botón de Envío ---
+        submitted = st.form_submit_button("💾 Guardar Jornada Completa")
+
+    # --- LÓGICA DE GUARDADO ---
+    if submitted:
+        if not supabase:
+            st.error("Error fatal: No hay conexión con Supabase.")
+        elif st.session_state.testigo_vol_aplicado_ml <= 0: 
+            st.warning("No se puede guardar: El 'Volumen Aplicado (mL/maceta)' debe ser mayor a cero.")
+        else:
+            try:
+                # Recalcular el porcentaje de drenaje final al guardar
+                testigo_porc_drenaje_final = (st.session_state.testigo_vol_drenado_ml / st.session_state.testigo_vol_aplicado_ml) * 100
+                
+                # Leemos los valores finales de los widgets usando sus keys
+                datos_para_insertar = {
+                    "fecha": fecha_actual_peru.strftime("%Y-%m-%d"),
+                    
+                    # Paso 1 (Excel)
+                    "tarea_del_dia": st.session_state.tarea_de_hoy,
+                    
+                    # Paso 2 (Drenaje)
+                    "sustrato_testigo": st.session_state.sustrato_testigo,
+                    "testigo_vol_aplicado_ml": st.session_state.testigo_vol_aplicado_ml,
+                    "testigo_vol_drenado_ml": st.session_state.testigo_vol_drenado_ml,
+                    "testigo_porc_drenaje": testigo_porc_drenaje_final,
+                    
+                    # Paso 3 (Registro General)
+                    "mezcla_ph_final": st.session_state.mezcla_ph_final,
+                    "mezcla_ce_final": st.session_state.mezcla_ce_final,
+                    "general_vol_aplicado_litros": st.session_state.general_vol_aplicado_litros,
+
+                    # Paso 4 (Dosis)
+                    "dias_aplicados": st.session_state.dias_aplicados,
+                    
+                    # Paso 5 (Formulario)
+                    "testigo_ph_drenaje": st.session_state.testigo_ph_drenaje,
+                    "testigo_ce_drenaje": st.session_state.testigo_ce_drenaje,
+                    "fuente_ph": st.session_state.fuente_ph,
+                    "fuente_ce": st.session_state.fuente_ce,
+                    "observaciones": st.session_state.observaciones,
+                }
+                
+                # --- AÑADIR LOS GRAMOS CALCULADOS ---
+                if 'calculos_finales_g' in st.session_state:
+                    datos_para_insertar.update(st.session_state.calculos_finales_g)
+                
+                supabase.table('Jornada_Riego').insert(datos_para_insertar).execute()
+                
+                st.success("¡Jornada de riego guardada exitosamente en la tabla 'Jornada_Riego'!")
+                st.balloons()
+
+            except Exception as e:
+                st.error(f"Error al guardar en Supabase: {e}")
+                st.warning("Error GRAVE al guardar. Posible Causa: ¿Agregaste las 9 NUEVAS columnas de gramos (ej: 'total_urea_g') a la tabla 'Jornada_Riego' en Supabase?")
+
+    # ======================================================================
+    # SECCIÓN DE HISTORIAL Y GRÁFICOS
+    # ======================================================================
+    st.divider()
+    st.header("Historial y Tendencias de la Jornada")
+
+    @st.cache_data(ttl=300) 
+    def cargar_datos_jornada():
+        if not supabase:
+            return pd.DataFrame()
+        try:
+            response = supabase.table('Jornada_Riego').select("*").order('fecha', desc=True).limit(100).execute()
+            if response.data:
+                df = pd.DataFrame(response.data)
+                df['fecha'] = pd.to_datetime(df['fecha'])
+                return df
+            else:
+                return pd.DataFrame() 
+        except Exception as e:
+            st.error(f"No se pudieron cargar los datos del historial: {e}")
+            return pd.DataFrame()
+
+    df_historial = cargar_datos_jornada()
+
+    if df_historial.empty:
+        st.info("Aún no hay registros en 'Jornada_Riego'.")
+    else:
+        st.write("Últimas jornadas registradas:")
+        st.dataframe(df_historial.head(), use_container_width=True)
+
+        st.subheader("Gráficos de Tendencias")
+        
+        sustratos_unicos = ["Todos"] + list(df_historial['sustrato_testigo'].unique())
+        sustrato_filtro = st.selectbox("Filtrar gráficos por sustrato:", sustratos_unicos)
+        
+        df_filtrado = df_historial
+        if sustrato_filtro != "Todos":
+            df_filtrado = df_historial[df_historial['sustrato_testigo'] == sustrato_filtro]
+
+        if df_filtrado.empty:
+            st.warning("No hay datos para el sustrato seleccionado.")
+        else:
+            gcol1, gcol2 = st.columns(2)
+            with gcol1:
+                fig_ph_drenaje = px.line(df_filtrado, x='fecha', y='testigo_ph_drenaje', color='sustrato_testigo',
+                                         title="Evolución del pH en Drenaje (Testigo)", markers=True)
+                st.plotly_chart(fig_ph_drenaje, use_container_width=True)
+            with gcol2:
+                fig_ce_drenaje = px.line(df_filtrado, x='fecha', y='testigo_ce_drenaje', color='sustrato_testigo',
+                                         title="Evolución de la CE en Drenaje (Testigo)", markers=True)
+                st.plotly_chart(fig_ce_drenaje, use_container_width=True)
+
+            gcol3, gcol4 = st.columns(2)
+            with gcol3:
+                fig_ph_mezcla = px.line(df_filtrado, x='fecha', y='mezcla_ph_final',
+                                         title="pH de la Mezcla Final Aplicada", markers=True)
+                st.plotly_chart(fig_ph_mezcla, use_container_width=True)
+            with gcol4:
+                fig_ce_mezcla = px.line(df_filtrado, x='fecha', y='mezcla_ce_final',
+                                         title="CE de la Mezcla Final Aplicada", markers=True)
+                st.plotly_chart(fig_ce_mezcla, use_container_width=True)
