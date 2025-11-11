@@ -61,12 +61,13 @@ def load_cronograma(fecha_hoy):
         
         for i in indices_fertilizantes:
             if i < len(df.columns):
-                # PASO 1: Reemplazar explícitamente "-" por Nulo (NaN)
-                # Usamos .replace() ANTES de to_numeric
-                df.iloc[:, i] = df.iloc[:, i].replace('-', pd.NA, regex=False)
+                # PASO 1: Reemplazar explícitamente "-" por Nulo (NaN) - (¡LÍNEA ELIMINADA!)
+                # Esta línea era redundante y menos robusta que pd.to_numeric
+                # df.iloc[:, i] = df.iloc[:, i].replace('-', pd.NA, regex=False) 
                 
                 # PASO 2: Convertir todo a números.
-                # errors='coerce' convierte cualquier texto restante en Nulo (NaN)
+                # errors='coerce' convierte CUALQUIER texto (incluido "-") en Nulo (NaN)
+                # Esta es la única línea que necesitamos.
                 df.iloc[:, i] = pd.to_numeric(df.iloc[:, i], errors='coerce')
         # --- FIN DE LA CORRECCIÓN ---
 
