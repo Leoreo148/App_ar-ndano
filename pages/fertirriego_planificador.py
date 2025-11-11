@@ -34,12 +34,43 @@ except ImportError:
 # --- RUTA SIMPLIFICADA ---
 FILE_PATH = "FRUTALES - EXCEL.xlsx"
 
+# ======================================================================
+# --- FUNCIÓN DE CRONOGRAMA (NUEVA LÓGICA) ---
+# ======================================================================
 @st.cache_data(ttl=600) 
 def load_cronograma(fecha_hoy):
     """
     Lee el cronograma desde el archivo en la raíz.
-    Devuelve un (string, pandas.Series) con los datos de la fila.
+    1. Determina la TAREA según el día de la semana (Lunes=G1, Martes=G2, etc.)
+    2. Busca en el Excel la fila de esa FECHA para obtener las DOSIS.
+    Devuelve (tarea_str, datos_dosis)
     """
+    
+    # --- NUEVA LÓGICA: Determinar Tarea por Día de la Semana ---
+    dia_semana = fecha_hoy.weekday() # Lunes=0, Martes=1, ..., Domingo=6
+    
+    if dia_semana == 0:
+        tarea_str = "Fertilización Grupo 1"
+    elif dia_semana == 1:
+        tarea_str = "Fertilización Grupo 2"
+    elif dia_semana == 2:
+        tarea_str = "Fertilización Grupo 3"
+    elif dia_semana == 3:
+        tarea_str = "Fertilización Grupo 4"
+    elif dia_semana == 4:
+        # Viernes: "Recuperación" o "Sin Riego"
+        tarea_str = "Recuperación / Sin Riego"
+    elif dia_semana == 5:
+        # Sábado: "Lavado"
+        tarea_str = "Lavado de Sales"
+    elif dia_semana == 6:
+        # Domingo: "Día No Laborable"
+        tarea_str = "Día No Laborable"
+    
+    # --- LÓGICA ANTIGUA (Modificada): Cargar Dosis desde Excel ---
+    # Ahora, independientemente de la tarea, leemos el Excel 
+    # para obtener los *números* (dosis) de esa fila/fecha.
+    
     sheet_name = "CRONOGRAMA"
     
     try:
@@ -62,37 +93,23 @@ def load_cronograma(fecha_hoy):
         
         # Ahora el filtro de FECHA funciona
         df = df.dropna(subset=['FECHA'])
-        # --- CORRECCIÓN DE COMPARACIÓN DE FECHA ---
         # Convertimos la columna FECHA a solo "fecha" (ignorando la hora)
         df['FECHA'] = pd.to_datetime(df['FECHA']).dt.date
         
-        # --- [CORRECCIÓN PRINCIPAL] ---
-        # Faltaba filtrar el dataframe por la fecha de hoy.
-        
+        # Buscar la fila de hoy
         task_row_df = df[df['FECHA'] == fecha_hoy]
         
-        # Ahora sí podemos comprobar si está vacío
         if task_row_df.empty:
-            # Esta línea ahora está correctamente indentada dentro del 'if'
-            return "No hay tarea de fertilización programada en el Excel para hoy.", None
+            # No se encontró la fecha de hoy en el Excel.
+            # Devolvemos la tarea (basada en el día de la semana), pero 'None' para los datos.
+            # Esto hará que el Paso 4 diga "No hay datos de dosis".
+            st.warning(f"Se asignó la tarea '{tarea_str}' por ser {fecha_hoy.strftime('%A')}, pero no se encontró la fecha {fecha_hoy} en el Excel. No se podrán calcular dosis.")
+            return tarea_str, None
 
-        # Si no está vacío, seleccionamos la primera (y única) fila
+        # Si encontramos la fila (incluso si está vacía de datos), la devolvemos
         task_row_data = task_row_df.iloc[0]
-        tarea_str = "Riego (Sin grupo de fertilizante específico hoy)"
-
-        # Lógica de detección de tarea (con los iloc correctos para header=5)
-        if pd.notna(task_row_data.iloc[7]): # Grupo 1 (Urea)
-            tarea_str = "Fertilización Grupo 1"
-        elif pd.notna(task_row_data.iloc[10]): # Grupo 2 (Sulf. Magnesio)
-            tarea_str = "Fertilización Grupo 2"
-        elif pd.notna(task_row_data.iloc[14]): # Grupo 3 (Boro)
-            tarea_str = "Fertilización Grupo 3"
-        elif pd.notna(task_row_data.iloc[15]): # Grupo 4 (Nitrato de Calcio)
-            tarea_str = "Fertilización Grupo 4"
-        elif pd.notna(task_row_data.iloc[16]): # Observación
-            if "LAVADO" in str(task_row_data.iloc[16]).upper():
-                tarea_str = "Lavado de Sales"
         
+        # Devolvemos la tarea (del día de la semana) y los datos (de la fila del Excel).
         return tarea_str, task_row_data
 
     except FileNotFoundError:
@@ -116,10 +133,7 @@ if TZ_PERU:
     try:
         fecha_actual_peru = datetime.now(TZ_PERU).date()
         
-        # --- [CORRECCIÓN DE OPTIMIZACIÓN] ---
-        # Dejamos que @st.cache_data(ttl=600) haga su trabajo.
-        
-        # Esta línea ahora funcionará
+        # Esta línea ahora usará la NUEVA lógica de load_cronograma
         tarea_de_hoy, datos_dosis = load_cronograma(fecha_actual_peru) 
         st.session_state.tarea_de_hoy = tarea_de_hoy
         st.session_state.datos_dosis = datos_dosis # Guardamos los datos de la fila
@@ -282,8 +296,10 @@ else:
     st.subheader("Dosis Total de Fertilizante a aplicar en Bidón")
     st.write(f"Cálculo para **{current_dias} día(s)** en un volumen total de **{current_vol_litros:.1f} Litros**:")
 
+    # EL CAMBIO DE LÓGICA ESTÁ AQUÍ:
+    # 'datos_dosis_excel' puede ser 'None' si la fecha no está en el Excel
     if datos_dosis_excel is None:
-        st.warning("No hay datos de dosis del Excel para calcular.")
+        st.warning(f"La tarea de hoy es '{st.session_state.tarea_de_hoy}', pero no se encontraron datos de dosis en el Excel para esta fecha.")
     else:
         # Los índices son correctos para header=5
         fertilizantes = [
@@ -328,7 +344,8 @@ else:
         st.session_state.calculos_finales_g = calculos_finales_g
 
         if not display_data:
-            st.info("La tarea de hoy no tiene fertilizantes programados.")
+            # ESTE MENSAJE AHORA ES MÁS PRECISO:
+            st.info(f"La tarea de hoy ({st.session_state.tarea_de_hoy}) no tiene dosis de fertilizantes listadas en la fila del Excel.")
         else:
             st.dataframe(pd.DataFrame(display_data), use_container_width=True)
 
@@ -348,7 +365,6 @@ else:
 
         with mcol2:
             st.subheader("Agua de Origen (Pozo/Canal)")
-            # --- [LÍNEA CORREGIDA/COMPLETADA] ---
             fuente_ph = st.number_input("pH Agua Origen", min_value=0.0, max_value=14.0, value=7.5, step=0.1, format="%.2f", key="fuente_ph")
             fuente_ce = st.number_input("CE Agua Origen (dS/m)", min_value=0.0, value=0.8, step=0.1, format="%.2f", key="fuente_ce")
 
