@@ -18,104 +18,6 @@ def init_supabase_connection():
         key = st.secrets["SUPABASE_KEY"]
         return create_client(url, key)
     except Exception as e:
-        st.error(f"Error al conectar con Supabase: {e}")
-        return None
-
-supabase = init_supabase_connection()
-
-# --- ZONA HORARIA DE PERÚ ---
-try:
-    TZ_PERU = pytz.timezone('America/Lima')
-except ImportError:
-    st.error("Se necesita la librería 'pytz'. Instálala con: pip install pytz")
-    TZ_PERU = None
-
-# ======================================================================
-# PASO 1: TAREA DEL DÍA (LEYENDO DEL EXCEL)
-# ======================================================================
-st.title("💧🧪 Jornada de Fertiriego y Drenaje")
-st.write("Flujo completo para registrar la prueba de drenaje, las mediciones y la jornada de riego.")
-
-# --- RUTA SIMPLIFICADA ---
-FILE_PATH = "FRUTALES - EXCEL.xlsx"
-
-# --- FUNCIÓN DE CARGA MODIFICADA ---
-@st.cache_data(ttl=600) 
-def load_cronograma(fecha_hoy):
-    """
-    Lee el cronograma desde el archivo en la raíz.
-    Devuelve un (string, pandas.Series) con los datos de la fila.
-    """
-    sheet_name = "CRONOGRAMA"
-    
-    try:
-        # --- CORRECCIÓN DEL HEADER ---
-        # La cabecera real (Urea, Fosfato, etc.) está en la fila 6, que es el índice 5
-        df = pd.read_excel(
-            FILE_PATH, 
-            sheet_name=sheet_name, 
-            header=5  # <-- ¡Esto es correcto!
-        )
-        
-        # --- CORRECCIÓN CRÍTICA: Renombrar la columna de Fecha ---
-        # La columna de fecha (en iloc 3) se llama 'Unnamed: 3' con este header
-        df = df.rename(columns={'Unnamed: 3': 'FECHA'})
-        
-        # --- CORRECCIÓN DE ÍNDICES (iloc) ---
-        # Ahora los índices de fertilizantes empiezan en 7 (Urea)
-        indices_fertilizantes = [7, 8, 9, 10, 11, 12, 13, 14, 15]
-        
-        for i in indices_fertilizantes:
-            if i < len(df.columns):
-                # errors='coerce' convierte CUALQUIER texto (incluido "-") en Nulo (NaN)
-                df.iloc[:, i] = pd.to_numeric(df.iloc[:, i], errors='coerce')
-        # --- FIN DE LA CORRECCIÓN ---
-
-        # Esta línea ahora funcionará porque hemos renombrado la columna
-        df = df.dropna(subset=['FECHA'])
-        df['FECHA'] = pd.to_datetime(df['FECHA'])
-        
-        task_row_df = df[df['FECHA'] == fecha_hoy]
-        
-        if task_row_df.empty:
-            return "No hay tarea de fertilización programada en el Excel para hoy.", None
-
-        task_row_data = task_row_df.iloc[0]
-        tarea_str = "Riego (Sin grupo de fertilizante específico hoy)"
-
-        # --- CORRECCIÓN DE ÍNDICES (iloc) EN LA LÓGICA DE TAREAS ---
-        # Grupo 1 (Urea) ahora está en iloc[7]
-        # Grupo 2 (Sulf. Magnesio) ahora está en iloc[10]
-        # Grupo 3 (Boro) ahora está en iloc[14]
-        # Grupo 4 (Nitrato de Calcio) ahora está en iloc[15]
-        # Observación ahora está en iloc[16]
-        
-        if pd.notna(task_row_data.iloc[7]): # Columna 'GRUPO 1' (Urea)
-            tarea_str = "Fertilización Grupo 1"
-        elif pd.notna(task_row_data.iloc[10]): # Columna 'GRUPO 2' (Sulf. Magnesio)
-            tarea_str = "Fertilización Grupo 2"
-        elif pd.notna(task_row_data.iloc[14]): # Columna 'GRUPO 3' (Boro)
-            tarea_str = "Fertilización Grupo 3"
-        elif pd.notna(task_row_data.iloc[15]): # Columna 'GRUPO 4' (Nitrato de Calcio)
-            tarea_str = "Fertilización Grupo 4"
-        elif pd.notna(task_row_data.iloc[16]): # Columna 'OBSERVACIÓN'
-            if "LAVADO" in str(task_row_data.iloc[16]).upper():
-                tarea_str = "Lavado de Sales"
-        
-        return tarea_str, task_row_data
-
-    except FileNotFoundError:
-        st.error(f"Error 'FileNotFoundError': No se encontró el archivo en la ruta: '{FILE_PATH}'.")
-        return "ERROR: Archivo no encontrado", None
-    except KeyError as e:
-        # Este error ahora será más útil
-        st.error(f"Error de 'KeyError': No se encontró la columna {e}. Revisa el Excel. ¿La cabecera está en la fila 6? ¿Está 'Unnamed: 3' renombrado a 'FECHA'?")
-        return f"ERROR: Falta la columna {e}", None
-    except Exception as e:
-        if "No sheet named" in str(e):
-             st.error(f"Error: Se encontró el archivo Excel, pero no se encontró la hoja (sheet) llamada '{sheet_name}'.")
-        else:
-            st.error(f"Error al procesar el cronograma desde Excel: {e}")
         st.info("Asegúrese también de tener 'openpyxl' instalado (en requirements.txt).")
         return "ERROR AL PROCESAR CRONOGRAMA", None
 
@@ -125,7 +27,10 @@ if TZ_PERU:
         fecha_actual_peru = datetime.now(TZ_PERU).date()
         fecha_hoy_pd = pd.to_datetime(fecha_actual_peru)
         
-        # (He quitado el st.cache_data.clear() para que no recargue siempre)
+        # --- CORRECCIÓN DE CACHÉ ---
+        # Forzamos a limpiar la caché CADA VEZ que se carga la página
+        # para asegurar que lea el Excel con la lógica MÁS RECIENTE.
+        st.cache_data.clear()
         
         tarea_de_hoy, datos_dosis = load_cronograma(fecha_hoy_pd) 
         st.session_state.tarea_de_hoy = tarea_de_hoy
@@ -148,7 +53,7 @@ st.info(f"Tarea para hoy ({fecha_actual_peru.strftime('%d/%m/%Y')}): **{st.sessi
 if st.session_state.datos_dosis is not None:
     with st.expander("Ver dosis DIARIA programada (según Excel, mg/L/día)"):
         datos = st.session_state.datos_dosis
-        # --- CORRECCIÓN DE ÍNDICES (iloc) ---
+        # Los índices son correctos para header=5
         fertilizantes_info = [
             ("Urea", 7), ("Fosfato Monoamónico", 8), ("Sulf. de Potasio", 9),
             ("Sulf. de Magnesio", 10), ("Sulf. de Cobre", 11), ("Sulf. de Manganeso", 12),
@@ -159,7 +64,6 @@ if st.session_state.datos_dosis is not None:
         for nombre, indice in fertilizantes_info:
             valor = datos.iloc[indice]
             if pd.notna(valor) and valor > 0:
-                # Limpiamos el nombre para el diccionario
                 key = f"{nombre} (mg/L/día)"
                 dosis_info_filtrada[key] = valor
         
@@ -172,6 +76,7 @@ if st.session_state.datos_dosis is not None:
 # Si la tarea falló, no mostramos el resto de la app
 if "ERROR" in st.session_state.tarea_de_hoy:
      st.error("No se pudo leer el cronograma. Revisa el error de arriba y asegúrate de que 'FRUTALES - EXCEL.xlsx' esté en la raíz.")
+     st.stop() # --- AÑADIDO: Detener el script si no hay tarea ---
 else:
     # ======================================================================
     # PASO 2: PRUEBA DE DRENAJE (FUERA DEL FORMULARIO)
@@ -291,7 +196,7 @@ else:
     if datos_dosis_excel is None:
         st.warning("No hay datos de dosis del Excel para calcular.")
     else:
-        # --- CORRECCIÓN DE ÍNDICES (iloc) ---
+        # Los índices son correctos para header=5
         fertilizantes = [
             # (Nombre a mostrar, Nombre Columna Supabase, Índice Excel)
             ("Urea", "total_urea_g", 7),
@@ -311,7 +216,6 @@ else:
         display_data = []
 
         for nombre_display, nombre_col_db, indice in fertilizantes:
-            # --- CORRECCIÓN ---
             # Asegurarnos de que el valor leído sea numérico antes de usarlo
             dosis_mg_l_dia = pd.to_numeric(datos_dosis_excel.iloc[indice], errors='coerce')
             
