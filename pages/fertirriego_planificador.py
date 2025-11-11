@@ -64,11 +64,11 @@ def load_cronograma(fecha_hoy):
         
         # Ahora el filtro de FECHA funciona
         df = df.dropna(subset=['FECHA'])
-        df['FECHA'] = pd.to_datetime(df['FECHA'])
+        # --- CORRECCIÓN DE COMPARACIÓN DE FECHA ---
+        # Convertimos la columna FECHA a solo "fecha" (ignorando la hora)
+        df['FECHA'] = pd.to_datetime(df['FECHA']).dt.date
         
-        task_row_df = df[df['FECHA'] == fecha_hoy]
-        
-        if task_row_df.empty:
+        # (El resto de la función load_cronograma no cambia...)
             return "No hay tarea de fertilización programada en el Excel para hoy.", None
 
         task_row_data = task_row_df.iloc[0]
@@ -109,7 +109,10 @@ def load_cronograma(fecha_hoy):
 if TZ_PERU:
     try:
         fecha_actual_peru = datetime.now(TZ_PERU).date()
-        fecha_hoy_pd = pd.to_datetime(fecha_actual_peru)
+        # --- CORRECCIÓN DE COMPARACIÓN DE FECHA ---
+        # Ya no necesitamos convertir a datetime de pandas.
+        # Usaremos el objeto 'date' (fecha_actual_peru) directamente.
+        # fecha_hoy_pd = pd.to_datetime(fecha_actual_peru) <-- LÍNEA ELIMINADA
         
         # --- CORRECCIÓN DE CACHÉ ---
         # Forzamos a limpiar la caché CADA VEZ que se carga la página
@@ -117,7 +120,8 @@ if TZ_PERU:
         st.cache_data.clear()
         
         # Esta línea ahora funcionará
-        tarea_de_hoy, datos_dosis = load_cronograma(fecha_hoy_pd) 
+        # Compara un objeto 'date' contra una columna de 'date'
+        tarea_de_hoy, datos_dosis = load_cronograma(fecha_actual_peru) 
         st.session_state.tarea_de_hoy = tarea_de_hoy
         st.session_state.datos_dosis = datos_dosis # Guardamos los datos de la fila
     except Exception as e:
