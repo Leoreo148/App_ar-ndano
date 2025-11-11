@@ -6,7 +6,12 @@ from supabase import create_client
 import pytz # Para manejar la zona horaria
 import os # Para la comprobación de archivo
 import re # Para limpiar nombres de columnas
-
+try:
+    TZ_PERU = pytz.timezone('America/Lima')
+except ImportError:
+    st.error("Se necesita la librería 'pytz'. Instálala con: pip install pytz")
+    TZ_PERU = None
+    
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Jornada de Fertiriego", page_icon="💧🧪", layout="wide")
 
