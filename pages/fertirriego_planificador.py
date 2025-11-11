@@ -57,13 +57,16 @@ def load_cronograma(fecha_hoy):
         
         # --- CORRECCIÓN CRÍTICA AQUÍ ---
         # Convertir las columnas de fertilizantes a numérico (de iloc 7 a 15)
-        # Esto convierte los strings "-" en NaN (Not a Number).
-        # pd.notna(NaN) evalúa a False, lo que arregla la lógica de detección de tareas.
         indices_fertilizantes = [7, 8, 9, 10, 11, 12, 13, 14, 15]
         
         for i in indices_fertilizantes:
             if i < len(df.columns):
-                # Seleccionar por índice de columna (integer location)
+                # PASO 1: Reemplazar explícitamente "-" por Nulo (NaN)
+                # Usamos .replace() ANTES de to_numeric
+                df.iloc[:, i] = df.iloc[:, i].replace('-', pd.NA, regex=False)
+                
+                # PASO 2: Convertir todo a números.
+                # errors='coerce' convierte cualquier texto restante en Nulo (NaN)
                 df.iloc[:, i] = pd.to_numeric(df.iloc[:, i], errors='coerce')
         # --- FIN DE LA CORRECCIÓN ---
 
