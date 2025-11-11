@@ -112,6 +112,8 @@ if TZ_PERU:
         fecha_hoy_pd = pd.to_datetime(fecha_actual_peru)
         
         # --- CORRECCIÓN DE CACHÉ ---
+        # Forzamos a limpiar la caché CADA VEZ que se carga la página
+        # para asegurar que lea el Excel con la lógica MÁS RECIENTE.
         st.cache_data.clear()
         
         # Esta línea ahora funcionará
