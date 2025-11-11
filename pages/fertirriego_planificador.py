@@ -54,12 +54,16 @@ def load_cronograma(fecha_hoy):
         df = pd.read_excel(
             FILE_PATH, 
             sheet_name=sheet_name, 
-            header=5  # <-- ¡ESTE ES EL BUG! Cambiado de 4 a 5
+            header=5  # <-- ¡Esto es correcto!
         )
         
+        # --- CORRECCIÓN CRÍTICA: Renombrar la columna de Fecha ---
+        # La columna de fecha (en iloc 3) se llama 'Unnamed: 3' con este header
+        df = df.rename(columns={'Unnamed: 3': 'FECHA'})
+        
         # --- CORRECCIÓN DE ÍNDICES (iloc) ---
-        # Ahora los índices de fertilizantes cambian (empiezan en 6)
-        indices_fertilizantes = [6, 7, 8, 9, 10, 11, 12, 13, 14]
+        # Ahora los índices de fertilizantes empiezan en 7 (Urea)
+        indices_fertilizantes = [7, 8, 9, 10, 11, 12, 13, 14, 15]
         
         for i in indices_fertilizantes:
             if i < len(df.columns):
@@ -67,6 +71,7 @@ def load_cronograma(fecha_hoy):
                 df.iloc[:, i] = pd.to_numeric(df.iloc[:, i], errors='coerce')
         # --- FIN DE LA CORRECCIÓN ---
 
+        # Esta línea ahora funcionará porque hemos renombrado la columna
         df = df.dropna(subset=['FECHA'])
         df['FECHA'] = pd.to_datetime(df['FECHA'])
         
@@ -79,23 +84,22 @@ def load_cronograma(fecha_hoy):
         tarea_str = "Riego (Sin grupo de fertilizante específico hoy)"
 
         # --- CORRECCIÓN DE ÍNDICES (iloc) EN LA LÓGICA DE TAREAS ---
-        # Grupo 1 (Urea) ahora está en iloc[6]
-        # Grupo 2 (Sulf. Magnesio) ahora está en iloc[9]
-        # Grupo 3 (Boro) ahora está en iloc[13]
-        # Grupo 4 (Nitrato de Calcio) ahora está en iloc[14]
-        # Observación ahora está en iloc[15]
+        # Grupo 1 (Urea) ahora está en iloc[7]
+        # Grupo 2 (Sulf. Magnesio) ahora está en iloc[10]
+        # Grupo 3 (Boro) ahora está en iloc[14]
+        # Grupo 4 (Nitrato de Calcio) ahora está en iloc[15]
+        # Observación ahora está en iloc[16]
         
-        if pd.notna(task_row_data.iloc[6]): # Columna 'GRUPO 1' (Urea)
+        if pd.notna(task_row_data.iloc[7]): # Columna 'GRUPO 1' (Urea)
             tarea_str = "Fertilización Grupo 1"
-        elif pd.notna(task_row_data.iloc[9]): # Columna 'GRUPO 2' (Sulf. Magnesio)
+        elif pd.notna(task_row_data.iloc[10]): # Columna 'GRUPO 2' (Sulf. Magnesio)
             tarea_str = "Fertilización Grupo 2"
-        elif pd.notna(task_row_data.iloc[13]): # Columna 'GRUPO 3' (Boro)
+        elif pd.notna(task_row_data.iloc[14]): # Columna 'GRUPO 3' (Boro)
+            tarea_str = "Fertilización Grupo 3"
+        elif pd.notna(task_row_data.iloc[15]): # Columna 'GRUPO 4' (Nitrato de Calcio)
             tarea_str = "Fertilización Grupo 4"
-        elif pd.notna(task_row_data.iloc[14]): # Columna 'GRUPO 4' (Nitrato de Calcio)
-            # (El índice 15 de antes era incorrecto, Boro y Nitrato son 13 y 14)
-            tarea_str = "Fertilización Grupo 4"
-        elif pd.notna(task_row_data.iloc[15]): # Columna 'OBSERVACIÓN'
-            if "LAVADO" in str(task_row_data.iloc[15]).upper():
+        elif pd.notna(task_row_data.iloc[16]): # Columna 'OBSERVACIÓN'
+            if "LAVADO" in str(task_row_data.iloc[16]).upper():
                 tarea_str = "Lavado de Sales"
         
         return tarea_str, task_row_data
@@ -104,7 +108,8 @@ def load_cronograma(fecha_hoy):
         st.error(f"Error 'FileNotFoundError': No se encontró el archivo en la ruta: '{FILE_PATH}'.")
         return "ERROR: Archivo no encontrado", None
     except KeyError as e:
-        st.error(f"Error de 'KeyError': No se encontró la columna {e}. Revisa el Excel. ¿La cabecera está en la fila 6?")
+        # Este error ahora será más útil
+        st.error(f"Error de 'KeyError': No se encontró la columna {e}. Revisa el Excel. ¿La cabecera está en la fila 6? ¿Está 'Unnamed: 3' renombrado a 'FECHA'?")
         return f"ERROR: Falta la columna {e}", None
     except Exception as e:
         if "No sheet named" in str(e):
@@ -120,9 +125,7 @@ if TZ_PERU:
         fecha_actual_peru = datetime.now(TZ_PERU).date()
         fecha_hoy_pd = pd.to_datetime(fecha_actual_peru)
         
-        # --- Limpiar caché para asegurar que se lea el nuevo header ---
-        # (Puedes comentar esta línea después de la primera ejecución)
-        st.cache_data.clear() 
+        # (He quitado el st.cache_data.clear() para que no recargue siempre)
         
         tarea_de_hoy, datos_dosis = load_cronograma(fecha_hoy_pd) 
         st.session_state.tarea_de_hoy = tarea_de_hoy
@@ -147,9 +150,9 @@ if st.session_state.datos_dosis is not None:
         datos = st.session_state.datos_dosis
         # --- CORRECCIÓN DE ÍNDICES (iloc) ---
         fertilizantes_info = [
-            ("Urea", 6), ("Fosfato Monoamónico", 7), ("Sulf. de Potasio", 8),
-            ("Sulf. de Magnesio", 9), ("Sulf. de Cobre", 10), ("Sulf. de Manganeso", 11),
-            ("Sulf. de Zinc", 12), ("Boro", 13), ("Nitrato de Calcio", 14)
+            ("Urea", 7), ("Fosfato Monoamónico", 8), ("Sulf. de Potasio", 9),
+            ("Sulf. de Magnesio", 10), ("Sulf. de Cobre", 11), ("Sulf. de Manganeso", 12),
+            ("Sulf. de Zinc", 13), ("Boro", 14), ("Nitrato de Calcio", 15)
         ]
         
         dosis_info_filtrada = {}
@@ -291,15 +294,15 @@ else:
         # --- CORRECCIÓN DE ÍNDICES (iloc) ---
         fertilizantes = [
             # (Nombre a mostrar, Nombre Columna Supabase, Índice Excel)
-            ("Urea", "total_urea_g", 6),
-            ("Fosfato Monoamónico", "total_fosfato_monoamonico_g", 7),
-            ("Sulf. de Potasio", "total_sulf_de_potasio_g", 8),
-            ("Sulf. de Magnesio", "total_sulf_de_magnesio_g", 9),
-            ("Sulf. de Cobre", "total_sulf_de_cobre_g", 10),
-            ("Sulf. de Manganeso", "total_sulf_de_manganeso_g", 11),
-            ("Sulf. de Zinc", "total_sulf_de_zinc_g", 12),
-            ("Boro", "total_boro_g", 13),
-            ("Nitrato de Calcio", "total_nitrato_de_calcio_g", 14)
+            ("Urea", "total_urea_g", 7),
+            ("Fosfato Monoamónico", "total_fosfato_monoamonico_g", 8),
+            ("Sulf. de Potasio", "total_sulf_de_potasio_g", 9),
+            ("Sulf. de Magnesio", "total_sulf_de_magnesio_g", 10),
+            ("Sulf. de Cobre", "total_sulf_de_cobre_g", 11),
+            ("Sulf. de Manganeso", "total_sulf_de_manganeso_g", 12),
+            ("Sulf. de Zinc", "total_sulf_de_zinc_g", 13),
+            ("Boro", "total_boro_g", 14),
+            ("Nitrato de Calcio", "total_nitrato_de_calcio_g", 15)
         ]
         
         # Diccionario para guardar los totales que irán a Supabase
@@ -480,4 +483,5 @@ else:
             with gcol4:
                 fig_ce_mezcla = px.line(df_filtrado, x='fecha', y='mezcla_ce_final',
                                          title="CE de la Mezcla Final Aplicada", markers=True)
-                st.plotly_chart(fig_ce_mezcla, use_container_world_width=True)
+                # --- CORRECCIÓN FINAL: 'use_container_world_width' no existe ---
+                st.plotly_chart(fig_ce_mezcla, use_container_width=True)
