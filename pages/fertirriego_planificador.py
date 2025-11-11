@@ -4,7 +4,7 @@ import plotly.express as px
 from datetime import datetime
 from supabase import create_client
 import pytz # Para manejar la zona horaria
-import os # Para comprobar si el archivo existe
+import os # Para la comprobación de archivo
 import re # Para limpiar nombres de columnas
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
@@ -55,6 +55,18 @@ def load_cronograma(fecha_hoy):
             header=4  # La cabecera está en la fila 5 (índice 4)
         )
         
+        # --- CORRECCIÓN CRÍTICA AQUÍ ---
+        # Convertir las columnas de fertilizantes a numérico (de iloc 7 a 15)
+        # Esto convierte los strings "-" en NaN (Not a Number).
+        # pd.notna(NaN) evalúa a False, lo que arregla la lógica de detección de tareas.
+        indices_fertilizantes = [7, 8, 9, 10, 11, 12, 13, 14, 15]
+        
+        for i in indices_fertilizantes:
+            if i < len(df.columns):
+                # Seleccionar por índice de columna (integer location)
+                df.iloc[:, i] = pd.to_numeric(df.iloc[:, i], errors='coerce')
+        # --- FIN DE LA CORRECCIÓN ---
+
         df = df.dropna(subset=['FECHA'])
         df['FECHA'] = pd.to_datetime(df['FECHA'])
         
@@ -67,6 +79,8 @@ def load_cronograma(fecha_hoy):
         tarea_str = "Riego (Sin grupo de fertilizante específico hoy)"
 
         # Determinar la tarea (usando los mismos índices)
+        # Ahora pd.notna(iloc[7]) será Falso (porque "-" se convirtió en NaN)
+        # Y pd.notna(iloc[10]) será Verdadero (porque 37.5 es un número)
         if pd.notna(task_row_data.iloc[7]): # Columna 'GRUPO 1'
             tarea_str = "Fertilización Grupo 1"
         elif pd.notna(task_row_data.iloc[10]): # Columna 'GRUPO 2'
@@ -284,7 +298,9 @@ else:
         display_data = []
 
         for nombre_display, nombre_col_db, indice in fertilizantes:
-            dosis_mg_l_dia = datos_dosis_excel.iloc[indice]
+            # --- CORRECCIÓN ---
+            # Asegurarnos de que el valor leído sea numérico antes de usarlo
+            dosis_mg_l_dia = pd.to_numeric(datos_dosis_excel.iloc[indice], errors='coerce')
             
             total_g = 0.0 # Por defecto es 0
             if pd.notna(dosis_mg_l_dia) and dosis_mg_l_dia > 0:
