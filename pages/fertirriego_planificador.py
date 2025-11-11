@@ -6,12 +6,7 @@ from supabase import create_client
 import pytz # Para manejar la zona horaria
 import os # Para la comprobación de archivo
 import re # Para limpiar nombres de columnas
-try:
-    TZ_PERU = pytz.timezone('America/Lima')
-except ImportError:
-    st.error("Se necesita la librería 'pytz'. Instálala con: pip install pytz")
-    TZ_PERU = None
-    
+
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Jornada de Fertiriego", page_icon="💧🧪", layout="wide")
 
@@ -23,8 +18,92 @@ def init_supabase_connection():
         key = st.secrets["SUPABASE_KEY"]
         return create_client(url, key)
     except Exception as e:
+        # Corregido: Mostrar el error correcto y devolver None
+        st.error(f"Error al conectar con Supabase: {e}") 
+        return None
+
+# --- [BLOQUE 1 FALTANTE - INICIALIZAR SUPABASE] ---
+supabase = init_supabase_connection()
+
+# --- [BLOQUE 2 FALTANTE - DEFINIR ZONA HORARIA] ---
+try:
+    TZ_PERU = pytz.timezone('America/Lima')
+except ImportError:
+    st.error("Se necesita la librería 'pytz'. Instálala con: pip install pytz")
+    TZ_PERU = None
+
+# --- [BLOQUE 3 FALTANTE - DEFINICIÓN DE LA FUNCIÓN] ---
+# --- RUTA SIMPLIFICADA ---
+FILE_PATH = "FRUTALES - EXCEL.xlsx"
+
+@st.cache_data(ttl=600) 
+def load_cronograma(fecha_hoy):
+    """
+    Lee el cronograma desde el archivo en la raíz.
+    Devuelve un (string, pandas.Series) con los datos de la fila.
+    """
+    sheet_name = "CRONOGRAMA"
+    
+    try:
+        # Usar header=5 (Fila 6)
+        df = pd.read_excel(
+            FILE_PATH, 
+            sheet_name=sheet_name, 
+            header=5
+        )
+        
+        # Renombrar la columna de Fecha
+        df = df.rename(columns={'Unnamed: 3': 'FECHA'})
+        
+        # Limpiar columnas de fertilizantes (índices 7 a 15)
+        indices_fertilizantes = [7, 8, 9, 10, 11, 12, 13, 14, 15]
+        
+        for i in indices_fertilizantes:
+            if i < len(df.columns):
+                df.iloc[:, i] = pd.to_numeric(df.iloc[:, i], errors='coerce')
+        
+        # Ahora el filtro de FECHA funciona
+        df = df.dropna(subset=['FECHA'])
+        df['FECHA'] = pd.to_datetime(df['FECHA'])
+        
+        task_row_df = df[df['FECHA'] == fecha_hoy]
+        
+        if task_row_df.empty:
+            return "No hay tarea de fertilización programada en el Excel para hoy.", None
+
+        task_row_data = task_row_df.iloc[0]
+        tarea_str = "Riego (Sin grupo de fertilizante específico hoy)"
+
+        # Lógica de detección de tarea (con los iloc correctos para header=5)
+        if pd.notna(task_row_data.iloc[7]): # Grupo 1 (Urea)
+            tarea_str = "Fertilización Grupo 1"
+        elif pd.notna(task_row_data.iloc[10]): # Grupo 2 (Sulf. Magnesio)
+            tarea_str = "Fertilización Grupo 2"
+        elif pd.notna(task_row_data.iloc[14]): # Grupo 3 (Boro)
+            tarea_str = "Fertilización Grupo 3"
+        elif pd.notna(task_row_data.iloc[15]): # Grupo 4 (Nitrato de Calcio)
+            tarea_str = "Fertilización Grupo 4"
+        elif pd.notna(task_row_data.iloc[16]): # Observación
+            if "LAVADO" in str(task_row_data.iloc[16]).upper():
+                tarea_str = "Lavado de Sales"
+        
+        return tarea_str, task_row_data
+
+    except FileNotFoundError:
+        st.error(f"Error 'FileNotFoundError': No se encontró el archivo en la ruta: '{FILE_PATH}'.")
+        return "ERROR: Archivo no encontrado", None
+    except KeyError as e:
+        st.error(f"Error de 'KeyError': No se encontró la columna {e}. Revisa el Excel. ¿La cabecera está en la fila 6? ¿Está 'Unnamed: 3' renombrado a 'FECHA'?")
+        return f"ERROR: Falta la columna {e}", None
+    except Exception as e:
+        if "No sheet named" in str(e):
+             st.error(f"Error: Se encontró el archivo Excel, pero no se encontró la hoja (sheet) llamada '{sheet_name}'.")
+        else:
+            st.error(f"Error al procesar el cronograma desde Excel: {e}")
         st.info("Asegúrese también de tener 'openpyxl' instalado (en requirements.txt).")
         return "ERROR AL PROCESAR CRONOGRAMA", None
+# --- FIN DE LOS BLOQUES FALTANTES ---
+
 
 # --- LÓGICA PRINCIPAL (PASO 1) ---
 if TZ_PERU:
@@ -33,10 +112,9 @@ if TZ_PERU:
         fecha_hoy_pd = pd.to_datetime(fecha_actual_peru)
         
         # --- CORRECCIÓN DE CACHÉ ---
-        # Forzamos a limpiar la caché CADA VEZ que se carga la página
-        # para asegurar que lea el Excel con la lógica MÁS RECIENTE.
         st.cache_data.clear()
         
+        # Esta línea ahora funcionará
         tarea_de_hoy, datos_dosis = load_cronograma(fecha_hoy_pd) 
         st.session_state.tarea_de_hoy = tarea_de_hoy
         st.session_state.datos_dosis = datos_dosis # Guardamos los datos de la fila
