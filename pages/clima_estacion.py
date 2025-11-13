@@ -2,10 +2,10 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
-from supabase import create_client # Tu import original
-import pytz # Para manejar la zona horaria
-import os # Para comprobar si el archivo existe
-import re # Para limpiar nombres de columnas
+from supabase import create_client 
+import pytz 
+import os 
+import re 
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Estación Meteorológica", page_icon="🌦️", layout="wide")
@@ -61,18 +61,19 @@ if uploaded_file is not None:
         with st.spinner(f"Procesando archivo '{uploaded_file.name}'... Esto puede tardar varios minutos."):
             
             df = None
+            is_txt = False
             
             if uploaded_file.name.endswith('.txt'):
                 st.info("Detectado archivo .txt. Leyendo con separador de tabulación...")
-                # --- [CORRECCIÓN] ---
-                # Forzar que todo se lea como texto (string)
+                # Para TXT, leemos todo como texto para que la unión funcione
                 df = pd.read_csv(uploaded_file, sep='\t', header=1, dtype=str)
+                is_txt = True
             
             elif uploaded_file.name.endswith('.xlsx'):
                 st.info("Detectado archivo .xlsx. Leyendo la primera hoja...")
-                # --- [CORRECCIÓN] ---
-                # Forzar que todo se lea como texto (string)
-                df = pd.read_excel(uploaded_file, header=1, dtype=str)
+                # Para XLSX, dejamos que pandas detecte los tipos de fecha/hora
+                df = pd.read_excel(uploaded_file, header=1)
+                is_txt = False
             
             else:
                 st.error("Tipo de archivo no soportado. Por favor sube .txt o .xlsx")
@@ -101,10 +102,32 @@ if uploaded_file is not None:
                 st.error("El archivo no contiene las columnas 'Date' o 'Time' esperadas en la cabecera.")
                 st.stop()
 
-            # --- AHORA ESTO FUNCIONARÁ ---
-            # 'df['fecha']' y 'df['hora']' SIEMPRE serán strings
-            fecha_hora_str = df['fecha'] + ' ' + df['hora']
-            df['timestamp'] = pd.to_datetime(fecha_hora_str, format='%d/%m/%y %H:%M')
+            # --- [CORRECCIÓN PRINCIPAL] ---
+            # Lógica diferente para TXT y XLSX
+            
+            if is_txt:
+                # Lógica para TXT: Juntar los strings
+                st.write("Procesando timestamp para formato TXT...")
+                fecha_hora_str = df['fecha'] + ' ' + df['hora']
+                df['timestamp'] = pd.to_datetime(fecha_hora_str, format='%d/%m/%y %H:%M')
+            else:
+                # Lógica para XLSX: Combinar objetos datetime
+                st.write("Procesando timestamp para formato XLSX...")
+                
+                # Convertir ambas columnas a datetime (pandas ya lo hizo, pero para asegurar)
+                fecha_dt = pd.to_datetime(df['fecha'])
+                hora_dt = pd.to_datetime(df['hora'])
+                
+                # Extraer la FECHA de la col 'fecha' y la HORA de la col 'hora'
+                # y combinarlas.
+                df['timestamp'] = df.apply(
+                    lambda row: datetime.combine(
+                        pd.to_datetime(row['fecha']).date(), 
+                        pd.to_datetime(row['hora']).time()
+                    ), 
+                    axis=1
+                )
+            # --- FIN DE LA CORRECCIÓN ---
 
             # 5. Seleccionar solo las columnas que necesitamos para Supabase
             columnas_para_subir = ['timestamp'] + [col for col in COLUMNS_MAP.values() if col not in ['fecha', 'hora']]
@@ -138,7 +161,7 @@ if uploaded_file is not None:
     except Exception as e:
         st.error(f"Ocurrió un error al procesar el archivo: {e}")
         st.warning("Verifica el formato del archivo. ¿La cabecera está en la fila 2 (header=1)?")
-        st.info("Verifica también que el formato de fecha en el script (línea 124) coincida con tu archivo (ej: 'dd/%m/%y %H:%M').")
+        st.info("Si es un TXT, verifica el formato de fecha (ej: 'dd/%m/%y %H:%M').")
 
 st.divider()
 
