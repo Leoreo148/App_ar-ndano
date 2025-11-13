@@ -2,14 +2,10 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
+from supabase import create_client # Tu import original
 import pytz # Para manejar la zona horaria
 import os # Para comprobar si el archivo existe
 import re # Para limpiar nombres de columnas
-# --- [CAMBIO] ---
-# 'create_client' no se importa directamente de 'supabase'.
-# Se importa desde 'supabase_py' o, más comúnmente, desde 'supabase_client'.
-# Asumiendo que usas el paquete moderno 'supabase-py':
-from supabase import create_client
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Estación Meteorológica", page_icon="🌦️", layout="wide")
@@ -41,11 +37,9 @@ st.title("🌦️ Dashboard de Estación Meteorológica")
 st.write("Sube el archivo de datos (`.txt` o `.xlsx`) de la estación para ingestar y analizar los datos climáticos.")
 
 # --- UPLOADER DE ARCHIVO ---
-# --- [CAMBIO 1] ---
-# Permitimos que el uploader acepte ambos tipos de archivo
 uploaded_file = st.file_uploader(
     "Sube tu archivo de datos de la estación (.txt o .xlsx)", 
-    type=["txt", "xlsx"], # <-- Se añadió "xlsx"
+    type=["txt", "xlsx"],
     help="Sube el archivo .txt (tabulado) o .xlsx. El script se encargará de limpiarlo y subirlo a Supabase."
 )
 
@@ -66,33 +60,24 @@ if uploaded_file is not None:
     try:
         with st.spinner(f"Procesando archivo '{uploaded_file.name}'... Esto puede tardar varios minutos."):
             
-            # Inicializamos el DataFrame
             df = None
-            
-            # --- [CAMBIO 2] ---
-            # Lógica condicional para leer el archivo
             
             if uploaded_file.name.endswith('.txt'):
                 st.info("Detectado archivo .txt. Leyendo con separador de tabulación...")
-                # 1. Leer el archivo de texto separado por tabulaciones (tabs)
-                # Asumimos que la cabecera real está en la fila 2 (índice 1)
-                df = pd.read_csv(uploaded_file, sep='\t', header=1)
+                # --- [CORRECCIÓN] ---
+                # Forzar que todo se lea como texto (string)
+                df = pd.read_csv(uploaded_file, sep='\t', header=1, dtype=str)
             
             elif uploaded_file.name.endswith('.xlsx'):
                 st.info("Detectado archivo .xlsx. Leyendo la primera hoja...")
-                # 1. Leer el archivo Excel
-                # Asumimos la misma estructura: cabecera en fila 2 (índice 1)
-                # Requiere 'openpyxl' (pip install openpyxl)
-                df = pd.read_excel(uploaded_file, header=1)
+                # --- [CORRECCIÓN] ---
+                # Forzar que todo se lea como texto (string)
+                df = pd.read_excel(uploaded_file, header=1, dtype=str)
             
             else:
                 st.error("Tipo de archivo no soportado. Por favor sube .txt o .xlsx")
-                # Detenemos el script si el tipo no es válido (aunque el uploader ya debería filtrarlo)
                 st.stop()
             
-            # --- FIN DEL [CAMBIO 2] ---
-            
-            # Si el df está vacío después de leer, detenemos
             if df is None or df.empty:
                 st.warning("El archivo está vacío o no se pudo leer.")
                 st.stop()
@@ -112,13 +97,12 @@ if uploaded_file is not None:
                     df[col] = pd.to_numeric(df[col], errors='coerce')
 
             # 4. Combinar 'fecha' y 'hora' en un 'timestamp'
-            # Asumimos que 'fecha' es dd/MM/yy y 'hora' es HH:mm
-            # ¡¡AJUSTA EL 'format' SI ES DIFERENTE!!
-            # Verificamos que las columnas existan
             if 'fecha' not in df.columns or 'hora' not in df.columns:
                 st.error("El archivo no contiene las columnas 'Date' o 'Time' esperadas en la cabecera.")
                 st.stop()
 
+            # --- AHORA ESTO FUNCIONARÁ ---
+            # 'df['fecha']' y 'df['hora']' SIEMPRE serán strings
             fecha_hora_str = df['fecha'] + ' ' + df['hora']
             df['timestamp'] = pd.to_datetime(fecha_hora_str, format='%d/%m/%y %H:%M')
 
@@ -142,21 +126,19 @@ if uploaded_file is not None:
                 st.write(f"Se procesaron {len(records_to_insert)} registros. Subiendo a Supabase...")
                 
                 # 9. Subir a Supabase con 'upsert'
-                # Esto inserta nuevos datos y actualiza los existentes (si el timestamp coincide)
                 response = supabase.table('Datos_Estacion_Clima').upsert(
                     records_to_insert, 
-                    on_conflict='timestamp' # Requiere que 'timestamp' sea ÚNICO o PRIMARY KEY en Supabase
+                    on_conflict='timestamp'
                 ).execute()
                 
                 st.success(f"¡Éxito! Se han subido y/o actualizado {len(records_to_insert)} registros en la base de datos.")
                 st.balloons()
-                # Limpiar la caché de los datos del historial para que se recargue
                 st.cache_data.clear()
 
     except Exception as e:
         st.error(f"Ocurrió un error al procesar el archivo: {e}")
         st.warning("Verifica el formato del archivo. ¿La cabecera está en la fila 2 (header=1)?")
-        st.info("Verifica también que el formato de fecha en el script (línea 121) coincida con tu archivo (ej: 'dd/%m/%y').")
+        st.info("Verifica también que el formato de fecha en el script (línea 124) coincida con tu archivo (ej: 'dd/%m/%y %H:%M').")
 
 st.divider()
 
@@ -174,7 +156,6 @@ def cargar_datos_climaticos(start_date, end_date):
         st.error("No hay conexión con Supabase.")
         return pd.DataFrame()
     try:
-        # Convertir fechas a strings ISO para la consulta
         start_iso = start_date.isoformat()
         end_iso = end_date.isoformat()
         
@@ -189,12 +170,10 @@ def cargar_datos_climaticos(start_date, end_date):
             df = pd.DataFrame(response.data)
             df['timestamp'] = pd.to_datetime(df['timestamp'])
             
-            # --- CORRECCIÓN DEL ERROR (ValueError en el gráfico) ---
             cols_to_convert = ['velocidad_viento', 'humedad_out', 'radiacion_solar', 'temperatura_out', 'uv_index', 'lluvia_rate']
             for col in cols_to_convert:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce')
-            # --- FIN DE LA CORRECCIÓN ---
             
             return df
         else:
@@ -211,7 +190,6 @@ with col_f1:
 with col_f2:
     end_date = st.date_input("Fecha de Fin", today, min_value=start_date, max_value=today)
 
-# Convertir a datetime para la consulta (inicio del día y fin del día)
 start_datetime = datetime.combine(start_date, datetime.min.time()).astimezone(TZ_PERU)
 end_datetime = datetime.combine(end_date, datetime.max.time()).astimezone(TZ_PERU)
 
@@ -222,16 +200,9 @@ if df_datos.empty:
 else:
     st.success(f"Mostrando {len(df_datos)} registros por minuto entre {start_date.strftime('%d/%m')} y {end_date.strftime('%d/%m')}.")
     
-    # --- CORRECCIÓN GRÁFICOS: Preparar datos ---
-    
-    # 1. Poner timestamp como índice para agrupar por hora
+    # --- Preparar datos para gráficos ---
     df_plot = df_datos.set_index('timestamp')
-    
-    # 2. Crear un DataFrame PROMEDIADO POR HORA para gráficos "suaves"
-    df_hourly = df_plot.resample('H').mean(numeric_only=True)
-    df_hourly = df_hourly.reset_index() # Devolver 'timestamp' a una columna para Plotly
-
-    # 3. Crear un DataFrame de CONTEO para la dirección del viento
+    df_hourly = df_plot.resample('H').mean(numeric_only=True).reset_index()
     df_wind_dir = df_plot['direccion_viento'].value_counts().reset_index()
     df_wind_dir.columns = ['direccion', 'conteo']
 
@@ -241,7 +212,6 @@ else:
     gcol1, gcol2, gcol3 = st.columns(3)
     
     with gcol1:
-        # --- NUEVO GRÁFICO: Temperatura ---
         fig_temp = px.line(df_hourly, x='timestamp', y='temperatura_out',
                              title='Temperatura Exterior (Promedio por Hora)',
                              labels={'temperatura_out': 'Temp (°C)', 'timestamp': 'Fecha y Hora'})
@@ -249,7 +219,6 @@ else:
         st.plotly_chart(fig_temp, use_container_width=True)
 
     with gcol2:
-        # Gráfico Viento (Movido)
         fig_viento = px.line(df_hourly, x='timestamp', y='velocidad_viento',
                              title='Velocidad del Viento (Promedio por Hora)',
                              labels={'velocidad_viento': 'Velocidad (km/h o m/s)', 'timestamp': 'Fecha y Hora'})
@@ -257,19 +226,16 @@ else:
         st.plotly_chart(fig_viento, use_container_width=True)
 
     with gcol3:
-        # Gráfico Humedad (Movido)
         fig_humedad = px.line(df_hourly, x='timestamp', y='humedad_out',
                                title='Humedad Exterior (Promedio por Hora)',
                                labels={'humedad_out': 'Humedad (%)', 'timestamp': 'Fecha y Hora'})
         fig_humedad.update_traces(line=dict(color='green'))
         st.plotly_chart(fig_humedad, use_container_width=True)
 
-    # --- Nueva fila para los gráficos secundarios ---
     st.subheader("Otras Métricas")
     gcol4, gcol5 = st.columns(2)
 
     with gcol4:
-        # Gráfico Radiación (Movido)
         fig_radiacion = px.line(df_hourly, x='timestamp', y='radiacion_solar',
                                  title='Radiación Solar (Promedio por Hora)',
                                  labels={'radiacion_solar': 'Radiación (W/m²)', 'timestamp': 'Fecha y Hora'})
@@ -277,7 +243,6 @@ else:
         st.plotly_chart(fig_radiacion, use_container_width=True)
 
     with gcol5:
-        # Gráfico Dirección Viento (Movido)
         fig_dir_viento = px.bar(df_wind_dir, x='direccion', y='conteo',
                                  title='Frecuencia Dirección del Viento',
                                  labels={'conteo': 'Número de Registros', 'direccion': 'Dirección'})
