@@ -65,13 +65,11 @@ if uploaded_file is not None:
             
             if uploaded_file.name.endswith('.txt'):
                 st.info("Detectado archivo .txt. Leyendo con separador de tabulación...")
-                # Para TXT, leemos todo como texto para que la unión funcione
                 df = pd.read_csv(uploaded_file, sep='\t', header=1, dtype=str)
                 is_txt = True
             
             elif uploaded_file.name.endswith('.xlsx'):
                 st.info("Detectado archivo .xlsx. Leyendo la primera hoja...")
-                # Para XLSX, dejamos que pandas detecte los tipos de fecha/hora
                 df = pd.read_excel(uploaded_file, header=1)
                 is_txt = False
             
@@ -86,8 +84,17 @@ if uploaded_file is not None:
             # 2. Renombrar las columnas para que coincidan con el MAPA
             df = df.rename(columns=COLUMNS_MAP)
             
-            # --- LIMPIEZA DE DATOS ---
-            
+            # --- [CORRECCIÓN CRÍTICA] ---
+            # Eliminar las MILES de filas vacías que lee de Excel
+            # Esto evita que se suban 10,000 registros 'null' a Supabase
+            df = df.dropna(subset=['fecha', 'hora'])
+            # --- FIN DE LA CORRECCIÓN ---
+
+            # Si después de limpiar no queda nada, nos detenemos.
+            if df.empty:
+                st.warning("El archivo se leyó, pero no se encontraron filas con datos de 'Date' y 'Time'.")
+                st.stop()
+
             # 3. Limpiar datos no numéricos ('---' -> NaN)
             numeric_cols = [
                 'temperatura_out', 'humedad_out', 'velocidad_viento', 
@@ -101,31 +108,20 @@ if uploaded_file is not None:
             if 'fecha' not in df.columns or 'hora' not in df.columns:
                 st.error("El archivo no contiene las columnas 'Date' o 'Time' esperadas en la cabecera.")
                 st.stop()
-
-            # --- [CORRECCIÓN PRINCIPAL] ---
             
             if is_txt:
-                # Lógica para TXT: Juntar los strings
                 st.write("Procesando timestamp para formato TXT...")
                 fecha_hora_str = df['fecha'] + ' ' + df['hora']
                 df['timestamp'] = pd.to_datetime(fecha_hora_str, format='%d/%m/%y %H:%M')
             else:
-                # Lógica para XLSX: Combinar objetos datetime y time
                 st.write("Procesando timestamp para formato XLSX...")
-                
-                # pd.read_excel() ya convirtió:
-                # 'df['fecha']' a objetos datetime (ej: 2025-11-05 00:00:00)
-                # 'df['hora']' a objetos time (ej: 00:01:00)
-                
-                # Solución: Combinar los objetos directamente.
                 df['timestamp'] = df.apply(
                     lambda row: datetime.combine(
-                        row['fecha'].date(),  # Extrae el objeto 'date' de la 'fecha'
-                        row['hora']           # Usa el objeto 'time' de la 'hora'
+                        row['fecha'].date(),
+                        row['hora']
                     ), 
                     axis=1
                 )
-            # --- FIN DE LA CORRECCIÓN ---
 
             # 5. Seleccionar solo las columnas que necesitamos para Supabase
             columnas_para_subir = ['timestamp'] + [col for col in COLUMNS_MAP.values() if col not in ['fecha', 'hora']]
@@ -170,9 +166,6 @@ st.header("Visualización de Datos Climáticos")
 
 @st.cache_data(ttl=600) # Cachear datos por 10 minutos
 def cargar_datos_climaticos(start_date, end_date):
-    """
-    Carga datos de Supabase para un rango de fechas.
-    """
     if not supabase:
         st.error("No hay conexión con Supabase.")
         return pd.DataFrame()
