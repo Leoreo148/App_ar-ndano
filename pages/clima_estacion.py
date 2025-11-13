@@ -5,6 +5,11 @@ from datetime import datetime
 import pytz # Para manejar la zona horaria
 import os # Para comprobar si el archivo existe
 import re # Para limpiar nombres de columnas
+# --- [CAMBIO] ---
+# 'create_client' no se importa directamente de 'supabase'.
+# Se importa desde 'supabase_py' o, más comúnmente, desde 'supabase_client'.
+# Asumiendo que usas el paquete moderno 'supabase-py':
+from supabase import create_client
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Estación Meteorológica", page_icon="🌦️", layout="wide")
@@ -33,13 +38,15 @@ except ImportError:
 # SECCIÓN DE CARGA DE DATOS
 # ======================================================================
 st.title("🌦️ Dashboard de Estación Meteorológica")
-st.write("Sube el archivo de datos (`.txt`) de la estación para ingestar y analizar los datos climáticos.")
+st.write("Sube el archivo de datos (`.txt` o `.xlsx`) de la estación para ingestar y analizar los datos climáticos.")
 
 # --- UPLOADER DE ARCHIVO ---
+# --- [CAMBIO 1] ---
+# Permitimos que el uploader acepte ambos tipos de archivo
 uploaded_file = st.file_uploader(
-    "Sube tu archivo de datos de la estación (formato .txt)", 
-    type=["txt"],
-    help="Sube el archivo .txt separado por tabulaciones. El script se encargará de limpiarlo y subirlo a Supabase."
+    "Sube tu archivo de datos de la estación (.txt o .xlsx)", 
+    type=["txt", "xlsx"], # <-- Se añadió "xlsx"
+    help="Sube el archivo .txt (tabulado) o .xlsx. El script se encargará de limpiarlo y subirlo a Supabase."
 )
 
 # Mapa de columnas del .txt a la base de datos
@@ -59,9 +66,36 @@ if uploaded_file is not None:
     try:
         with st.spinner(f"Procesando archivo '{uploaded_file.name}'... Esto puede tardar varios minutos."):
             
-            # 1. Leer el archivo de texto separado por tabulaciones (tabs)
-            # Asumimos que la cabecera real está en la fila 2 (índice 1)
-            df = pd.read_csv(uploaded_file, sep='\t', header=1)
+            # Inicializamos el DataFrame
+            df = None
+            
+            # --- [CAMBIO 2] ---
+            # Lógica condicional para leer el archivo
+            
+            if uploaded_file.name.endswith('.txt'):
+                st.info("Detectado archivo .txt. Leyendo con separador de tabulación...")
+                # 1. Leer el archivo de texto separado por tabulaciones (tabs)
+                # Asumimos que la cabecera real está en la fila 2 (índice 1)
+                df = pd.read_csv(uploaded_file, sep='\t', header=1)
+            
+            elif uploaded_file.name.endswith('.xlsx'):
+                st.info("Detectado archivo .xlsx. Leyendo la primera hoja...")
+                # 1. Leer el archivo Excel
+                # Asumimos la misma estructura: cabecera en fila 2 (índice 1)
+                # Requiere 'openpyxl' (pip install openpyxl)
+                df = pd.read_excel(uploaded_file, header=1)
+            
+            else:
+                st.error("Tipo de archivo no soportado. Por favor sube .txt o .xlsx")
+                # Detenemos el script si el tipo no es válido (aunque el uploader ya debería filtrarlo)
+                st.stop()
+            
+            # --- FIN DEL [CAMBIO 2] ---
+            
+            # Si el df está vacío después de leer, detenemos
+            if df is None or df.empty:
+                st.warning("El archivo está vacío o no se pudo leer.")
+                st.stop()
 
             # 2. Renombrar las columnas para que coincidan con el MAPA
             df = df.rename(columns=COLUMNS_MAP)
@@ -80,6 +114,11 @@ if uploaded_file is not None:
             # 4. Combinar 'fecha' y 'hora' en un 'timestamp'
             # Asumimos que 'fecha' es dd/MM/yy y 'hora' es HH:mm
             # ¡¡AJUSTA EL 'format' SI ES DIFERENTE!!
+            # Verificamos que las columnas existan
+            if 'fecha' not in df.columns or 'hora' not in df.columns:
+                st.error("El archivo no contiene las columnas 'Date' o 'Time' esperadas en la cabecera.")
+                st.stop()
+
             fecha_hora_str = df['fecha'] + ' ' + df['hora']
             df['timestamp'] = pd.to_datetime(fecha_hora_str, format='%d/%m/%y %H:%M')
 
@@ -116,8 +155,8 @@ if uploaded_file is not None:
 
     except Exception as e:
         st.error(f"Ocurrió un error al procesar el archivo: {e}")
-        st.warning("Verifica el formato del archivo. ¿Está separado por tabulaciones? ¿La cabecera está en la fila 2?")
-        st.info("Verifica también que el formato de fecha en el script (línea 102) coincida con tu archivo (ej: 'dd/%m/%y').")
+        st.warning("Verifica el formato del archivo. ¿La cabecera está en la fila 2 (header=1)?")
+        st.info("Verifica también que el formato de fecha en el script (línea 121) coincida con tu archivo (ej: 'dd/%m/%y').")
 
 st.divider()
 
@@ -151,13 +190,9 @@ def cargar_datos_climaticos(start_date, end_date):
             df['timestamp'] = pd.to_datetime(df['timestamp'])
             
             # --- CORRECCIÓN DEL ERROR (ValueError en el gráfico) ---
-            # Forzar las columnas a ser numéricas DESPUÉS de cargarlas de Supabase.
-            # Pandas puede inferir 'object' (texto) si la columna contiene valores NULL,
-            # y 'mean(numeric_only=True)' las ignorará, causando el ValueError.
             cols_to_convert = ['velocidad_viento', 'humedad_out', 'radiacion_solar', 'temperatura_out', 'uv_index', 'lluvia_rate']
             for col in cols_to_convert:
                 if col in df.columns:
-                    # 'coerce' convierte cualquier error (ej. 'None') en NaN (Nulo numérico)
                     df[col] = pd.to_numeric(df[col], errors='coerce')
             # --- FIN DE LA CORRECCIÓN ---
             
@@ -193,7 +228,6 @@ else:
     df_plot = df_datos.set_index('timestamp')
     
     # 2. Crear un DataFrame PROMEDIADO POR HORA para gráficos "suaves"
-    # 'H' significa 'Hourly' (por hora). .mean() calcula el promedio.
     df_hourly = df_plot.resample('H').mean(numeric_only=True)
     df_hourly = df_hourly.reset_index() # Devolver 'timestamp' a una columna para Plotly
 
@@ -204,7 +238,6 @@ else:
     # --- Gráficos ---
     st.subheader("Tendencias Climáticas (Promedios por Hora)")
     
-    # --- CAMBIO: 3 columnas para los gráficos principales ---
     gcol1, gcol2, gcol3 = st.columns(3)
     
     with gcol1:
@@ -226,8 +259,8 @@ else:
     with gcol3:
         # Gráfico Humedad (Movido)
         fig_humedad = px.line(df_hourly, x='timestamp', y='humedad_out',
-                              title='Humedad Exterior (Promedio por Hora)',
-                              labels={'humedad_out': 'Humedad (%)', 'timestamp': 'Fecha y Hora'})
+                               title='Humedad Exterior (Promedio por Hora)',
+                               labels={'humedad_out': 'Humedad (%)', 'timestamp': 'Fecha y Hora'})
         fig_humedad.update_traces(line=dict(color='green'))
         st.plotly_chart(fig_humedad, use_container_width=True)
 
@@ -238,16 +271,16 @@ else:
     with gcol4:
         # Gráfico Radiación (Movido)
         fig_radiacion = px.line(df_hourly, x='timestamp', y='radiacion_solar',
-                                title='Radiación Solar (Promedio por Hora)',
-                                labels={'radiacion_solar': 'Radiación (W/m²)', 'timestamp': 'Fecha y Hora'})
+                                 title='Radiación Solar (Promedio por Hora)',
+                                 labels={'radiacion_solar': 'Radiación (W/m²)', 'timestamp': 'Fecha y Hora'})
         fig_radiacion.update_traces(line=dict(color='orange'))
         st.plotly_chart(fig_radiacion, use_container_width=True)
 
     with gcol5:
         # Gráfico Dirección Viento (Movido)
         fig_dir_viento = px.bar(df_wind_dir, x='direccion', y='conteo',
-                                title='Frecuencia Dirección del Viento',
-                                labels={'conteo': 'Número de Registros', 'direccion': 'Dirección'})
+                                 title='Frecuencia Dirección del Viento',
+                                 labels={'conteo': 'Número de Registros', 'direccion': 'Dirección'})
         st.plotly_chart(fig_dir_viento, use_container_width=True)
 
     st.subheader("Datos Crudos (Tabla)")
