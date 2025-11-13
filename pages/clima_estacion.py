@@ -34,16 +34,18 @@ except ImportError:
 # SECCIÓN DE CARGA DE DATOS
 # ======================================================================
 st.title("🌦️ Dashboard de Estación Meteorológica")
-st.write("Sube el archivo de datos (`.txt` o `.xlsx`) de la estación para ingestar y analizar los datos climáticos.")
+st.write("Sube el archivo de datos (`.xlsx`) de la estación para ingestar y analizar los datos climáticos.")
 
 # --- UPLOADER DE ARCHIVO ---
+# --- [CAMBIO 1] ---
+# Simplificado para aceptar solo .xlsx
 uploaded_file = st.file_uploader(
-    "Sube tu archivo de datos de la estación (.txt o .xlsx)", 
-    type=["txt", "xlsx"],
-    help="Sube el archivo .txt (tabulado) o .xlsx. El script se encargará de limpiarlo y subirlo a Supabase."
+    "Sube tu archivo de datos de la estación (.xlsx)", 
+    type=["xlsx"],
+    help="Sube el archivo .xlsx. El script se encargará de limpiarlo y subirlo a Supabase."
 )
 
-# Mapa de columnas del .txt a la base de datos
+# Mapa de columnas del .xlsx a la base de datos
 COLUMNS_MAP = {
     'Date': 'fecha', # Esta es temporal, se eliminará
     'Time': 'hora',  # Esta es temporal, se eliminará
@@ -60,42 +62,31 @@ if uploaded_file is not None:
     try:
         with st.spinner(f"Procesando archivo '{uploaded_file.name}'... Esto puede tardar varios minutos."):
             
-            df = None
-            is_txt = False
-            
-            if uploaded_file.name.endswith('.txt'):
-                st.info("Detectado archivo .txt. Leyendo con separador de tabulación...")
-                df = pd.read_csv(uploaded_file, sep='\t', header=1, dtype=str)
-                is_txt = True
-            
-            elif uploaded_file.name.endswith('.xlsx'):
-                st.info("Detectado archivo .xlsx. Leyendo la primera hoja...")
-                df = pd.read_excel(uploaded_file, header=1)
-                is_txt = False
-            
-            else:
-                st.error("Tipo de archivo no soportado. Por favor sube .txt o .xlsx")
-                st.stop()
+            # --- [CAMBIO 2] ---
+            # Lógica de .txt eliminada
+            st.info("Detectado archivo .xlsx. Leyendo la primera hoja...")
+            df = pd.read_excel(uploaded_file, header=1)
             
             if df is None or df.empty:
                 st.warning("El archivo está vacío o no se pudo leer.")
                 st.stop()
 
-            # 2. Renombrar las columnas para que coincidan con el MAPA
+            # --- [CAMBIO 3 - CORRECCIÓN CRÍTICA] ---
+            # Limpiar los nombres de las columnas de espacios en blanco
+            # ej: "Out Temp " -> "Out Temp"
+            df.columns = df.columns.str.strip()
+
+            # 2. Renombrar las columnas (AHORA SÍ FUNCIONARÁ)
             df = df.rename(columns=COLUMNS_MAP)
             
-            # --- [CORRECCIÓN CRÍTICA] ---
-            # Eliminar las MILES de filas vacías que lee de Excel
-            # Esto evita que se suban 10,000 registros 'null' a Supabase
+            # 3. Eliminar las MILES de filas vacías que lee de Excel
             df = df.dropna(subset=['fecha', 'hora'])
-            # --- FIN DE LA CORRECCIÓN ---
 
-            # Si después de limpiar no queda nada, nos detenemos.
             if df.empty:
                 st.warning("El archivo se leyó, pero no se encontraron filas con datos de 'Date' y 'Time'.")
                 st.stop()
 
-            # 3. Limpiar datos no numéricos ('---' -> NaN)
+            # 4. Limpiar datos no numéricos ('---' -> NaN)
             numeric_cols = [
                 'temperatura_out', 'humedad_out', 'velocidad_viento', 
                 'radiacion_solar', 'uv_index', 'lluvia_rate'
@@ -104,37 +95,44 @@ if uploaded_file is not None:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce')
 
-            # 4. Combinar 'fecha' y 'hora' en un 'timestamp'
+            # 5. Combinar 'fecha' y 'hora' en un 'timestamp'
             if 'fecha' not in df.columns or 'hora' not in df.columns:
                 st.error("El archivo no contiene las columnas 'Date' o 'Time' esperadas en la cabecera.")
                 st.stop()
             
-            if is_txt:
-                st.write("Procesando timestamp para formato TXT...")
-                fecha_hora_str = df['fecha'] + ' ' + df['hora']
-                df['timestamp'] = pd.to_datetime(fecha_hora_str, format='%d/%m/%y %H:%M')
-            else:
-                st.write("Procesando timestamp para formato XLSX...")
-                df['timestamp'] = df.apply(
-                    lambda row: datetime.combine(
-                        row['fecha'].date(),
-                        row['hora']
-                    ), 
-                    axis=1
-                )
+            # --- [CAMBIO 4 - CORRECCIÓN DE ZONA HORARIA] ---
+            st.write("Procesando timestamp para formato XLSX...")
+            
+            # 5a. Combinar fecha y hora para crear un timestamp "naive" (sin zona horaria)
+            df['timestamp_naive'] = df.apply(
+                lambda row: datetime.combine(
+                    row['fecha'].date(),
+                    row['hora']
+                ), 
+                axis=1
+            )
+            
+            # 5b. Localizar ese timestamp a la zona horaria de Perú
+            # Esto le dice a Python: "este tiempo que cree es de Lima"
+            df['timestamp'] = df['timestamp_naive'].apply(
+                lambda ts_naive: TZ_PERU.localize(ts_naive)
+            )
+            # --- FIN DEL CAMBIO 4 ---
 
-            # 5. Seleccionar solo las columnas que necesitamos para Supabase
+
+            # 6. Seleccionar solo las columnas que necesitamos para Supabase
             columnas_para_subir = ['timestamp'] + [col for col in COLUMNS_MAP.values() if col not in ['fecha', 'hora']]
             columnas_existentes = [col for col in columnas_para_subir if col in df.columns]
             df_final = df[columnas_existentes]
             
-            # 6. Convertir Timestamps a string ISO para Supabase (JSON)
+            # 7. Convertir Timestamps a string ISO para Supabase (JSON)
+            # Ahora el string incluirá la zona horaria (ej: "...-05:00")
             df_final['timestamp'] = df_final['timestamp'].apply(lambda x: x.isoformat())
 
-            # 7. Reemplazar 'NaN' (de Python) con 'None' (de JSON)
+            # 8. Reemplazar 'NaN' (de Python) con 'None' (de JSON)
             df_final = df_final.astype(object).where(pd.notnull(df_final), None)
 
-            # 8. Convertir a un formato de diccionario para Supabase
+            # 9. Convertir a un formato de diccionario para Supabase
             records_to_insert = df_final.to_dict('records')
             
             if not records_to_insert:
@@ -142,7 +140,7 @@ if uploaded_file is not None:
             else:
                 st.write(f"Se procesaron {len(records_to_insert)} registros. Subiendo a Supabase...")
                 
-                # 9. Subir a Supabase con 'upsert'
+                # 10. Subir a Supabase con 'upsert'
                 response = supabase.table('Datos_Estacion_Clima').upsert(
                     records_to_insert, 
                     on_conflict='timestamp'
@@ -155,7 +153,7 @@ if uploaded_file is not None:
     except Exception as e:
         st.error(f"Ocurrió un error al procesar el archivo: {e}")
         st.warning("Verifica el formato del archivo. ¿La cabecera está en la fila 2 (header=1)?")
-        st.info("Si es un TXT, verifica el formato de fecha (ej: 'dd/%m/%y %H:%M').")
+        st.info(f"Asegúrate que las columnas {list(COLUMNS_MAP.keys())} existan en tu Excel.")
 
 st.divider()
 
@@ -204,8 +202,10 @@ with col_f1:
 with col_f2:
     end_date = st.date_input("Fecha de Fin", today, min_value=start_date, max_value=today)
 
-start_datetime = datetime.combine(start_date, datetime.min.time()).astimezone(TZ_PERU)
-end_datetime = datetime.combine(end_date, datetime.max.time()).astimezone(TZ_PERU)
+# --- CORRECCIÓN DE ZONA HORARIA EN FILTRO ---
+# Localizamos las fechas de inicio y fin para que coincidan con los datos de Supabase
+start_datetime = TZ_PERU.localize(datetime.combine(start_date, datetime.min.time()))
+end_datetime = TZ_PERU.localize(datetime.combine(end_date, datetime.max.time()))
 
 df_datos = cargar_datos_climaticos(start_datetime, end_datetime)
 
