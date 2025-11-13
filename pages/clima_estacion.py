@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from datetime import datetime
+from datetime import datetime, time # Importar 'time'
 from supabase import create_client 
 import pytz 
 import os 
@@ -103,7 +103,6 @@ if uploaded_file is not None:
                 st.stop()
 
             # --- [CORRECCIÓN PRINCIPAL] ---
-            # Lógica diferente para TXT y XLSX
             
             if is_txt:
                 # Lógica para TXT: Juntar los strings
@@ -111,19 +110,18 @@ if uploaded_file is not None:
                 fecha_hora_str = df['fecha'] + ' ' + df['hora']
                 df['timestamp'] = pd.to_datetime(fecha_hora_str, format='%d/%m/%y %H:%M')
             else:
-                # Lógica para XLSX: Combinar objetos datetime
+                # Lógica para XLSX: Combinar objetos datetime y time
                 st.write("Procesando timestamp para formato XLSX...")
                 
-                # Convertir ambas columnas a datetime (pandas ya lo hizo, pero para asegurar)
-                fecha_dt = pd.to_datetime(df['fecha'])
-                hora_dt = pd.to_datetime(df['hora'])
+                # pd.read_excel() ya convirtió:
+                # 'df['fecha']' a objetos datetime (ej: 2025-11-05 00:00:00)
+                # 'df['hora']' a objetos time (ej: 00:01:00)
                 
-                # Extraer la FECHA de la col 'fecha' y la HORA de la col 'hora'
-                # y combinarlas.
+                # Solución: Combinar los objetos directamente.
                 df['timestamp'] = df.apply(
                     lambda row: datetime.combine(
-                        pd.to_datetime(row['fecha']).date(), 
-                        pd.to_datetime(row['hora']).time()
+                        row['fecha'].date(),  # Extrae el objeto 'date' de la 'fecha'
+                        row['hora']           # Usa el objeto 'time' de la 'hora'
                     ), 
                     axis=1
                 )
