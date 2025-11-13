@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from datetime import datetime, time # Importar 'time'
+from datetime import datetime, time 
 from supabase import create_client 
 import pytz 
 import os 
@@ -37,33 +37,24 @@ st.title("🌦️ Dashboard de Estación Meteorológica")
 st.write("Sube el archivo de datos (`.xlsx`) de la estación para ingestar y analizar los datos climáticos.")
 
 # --- UPLOADER DE ARCHIVO ---
-# --- [CAMBIO 1] ---
-# Simplificado para aceptar solo .xlsx
 uploaded_file = st.file_uploader(
     "Sube tu archivo de datos de la estación (.xlsx)", 
     type=["xlsx"],
     help="Sube el archivo .xlsx. El script se encargará de limpiarlo y subirlo a Supabase."
 )
 
-# Mapa de columnas del .xlsx a la base de datos
-COLUMNS_MAP = {
-    'Date': 'fecha', # Esta es temporal, se eliminará
-    'Time': 'hora',  # Esta es temporal, se eliminará
-    'Out Hum': 'humedad_out',
-    'Out Temp': 'temperatura_out',
-    'Wind Speed': 'velocidad_viento',
-    'Wind Dir': 'direccion_viento',
-    'Solar Rad.': 'radiacion_solar',
-    'UV Index': 'uv_index',
-    'Rain Rate': 'lluvia_rate'
-}
+# --- [CAMBIO 1] ---
+# Este mapa ya no se usará para renombrar, 
+# solo como referencia para las columnas que subiremos.
+COLUMNAS_FINALES = [
+    'fecha', 'hora', 'humedad_out', 'temperatura_out', 'velocidad_viento', 
+    'direccion_viento', 'radiacion_solar', 'uv_index', 'lluvia_rate'
+]
 
 if uploaded_file is not None:
     try:
         with st.spinner(f"Procesando archivo '{uploaded_file.name}'... Esto puede tardar varios minutos."):
             
-            # --- [CAMBIO 2] ---
-            # Lógica de .txt eliminada
             st.info("Detectado archivo .xlsx. Leyendo la primera hoja...")
             df = pd.read_excel(uploaded_file, header=1)
             
@@ -71,39 +62,60 @@ if uploaded_file is not None:
                 st.warning("El archivo está vacío o no se pudo leer.")
                 st.stop()
 
-            # --- [CAMBIO 3 - CORRECCIÓN CRÍTICA] ---
-            # Limpiar los nombres de las columnas de espacios en blanco
-            # ej: "Out Temp " -> "Out Temp"
-            df.columns = df.columns.str.strip()
-
-            # 2. Renombrar las columnas (AHORA SÍ FUNCIONARÁ)
-            df = df.rename(columns=COLUMNS_MAP)
-            
-            # 3. Eliminar las MILES de filas vacías que lee de Excel
-            df = df.dropna(subset=['fecha', 'hora'])
+            # --- [CAMBIO 2 - CORRECCIÓN CRÍTICA] ---
+            # Limpiar primero las filas vacías, usando los nombres de columna originales (por índice)
+            # Asumimos que 'Date' es la col 0 y 'Time' es la col 1
+            col_fecha_original = df.columns[0]
+            col_hora_original = df.columns[1]
+            df = df.dropna(subset=[col_fecha_original, col_hora_original])
 
             if df.empty:
                 st.warning("El archivo se leyó, pero no se encontraron filas con datos de 'Date' y 'Time'.")
                 st.stop()
+                
+            st.write(f"Encontrados {len(df)} registros con datos. Procesando...")
 
-            # 4. Limpiar datos no numéricos ('---' -> NaN)
+            # --- [CAMBIO 3 - RENOMBRADO POR POSICIÓN] ---
+            # Tomar los nombres de columna actuales
+            current_cols = df.columns.tolist()
+            
+            # Verificar que tengamos suficientes columnas
+            if len(current_cols) < 9:
+                st.error(f"Error: El archivo solo tiene {len(current_cols)} columnas, se esperaban al menos 9 (Date, Time, Temp, Hum, etc.).")
+                st.stop()
+
+            # Crear el mapa de renombrado dinámicamente
+            # Asumimos que el orden NUNCA cambia:
+            rename_map = {
+                current_cols[0]: 'fecha',           # 'Date'
+                current_cols[1]: 'hora',            # 'Time'
+                current_cols[2]: 'temperatura_out', # 'Out Temp'
+                current_cols[3]: 'humedad_out',     # 'Out Hum'
+                current_cols[4]: 'velocidad_viento',# 'Wind Speed'
+                current_cols[5]: 'direccion_viento',# 'Wind Dir'
+                current_cols[6]: 'radiacion_solar', # 'Solar Rad.'
+                current_cols[7]: 'uv_index',        # 'UV Index'
+                current_cols[8]: 'lluvia_rate'      # 'Rain Rate'
+            }
+
+            # 2. Renombrar las columnas
+            df = df.rename(columns=rename_map)
+            # --- FIN DEL CAMBIO 3 ---
+
+
+            # 3. Limpiar datos no numéricos ('---' -> NaN)
             numeric_cols = [
                 'temperatura_out', 'humedad_out', 'velocidad_viento', 
                 'radiacion_solar', 'uv_index', 'lluvia_rate'
             ]
             for col in numeric_cols:
                 if col in df.columns:
+                    # 'coerce' convierte '---' y otros errores a NaN (Nulo Numérico)
                     df[col] = pd.to_numeric(df[col], errors='coerce')
 
-            # 5. Combinar 'fecha' y 'hora' en un 'timestamp'
-            if 'fecha' not in df.columns or 'hora' not in df.columns:
-                st.error("El archivo no contiene las columnas 'Date' o 'Time' esperadas en la cabecera.")
-                st.stop()
-            
-            # --- [CAMBIO 4 - CORRECCIÓN DE ZONA HORARIA] ---
+            # 4. Combinar 'fecha' y 'hora' en un 'timestamp'
             st.write("Procesando timestamp para formato XLSX...")
             
-            # 5a. Combinar fecha y hora para crear un timestamp "naive" (sin zona horaria)
             df['timestamp_naive'] = df.apply(
                 lambda row: datetime.combine(
                     row['fecha'].date(),
@@ -112,27 +124,25 @@ if uploaded_file is not None:
                 axis=1
             )
             
-            # 5b. Localizar ese timestamp a la zona horaria de Perú
-            # Esto le dice a Python: "este tiempo que cree es de Lima"
+            # Localizar ese timestamp a la zona horaria de Perú
             df['timestamp'] = df['timestamp_naive'].apply(
                 lambda ts_naive: TZ_PERU.localize(ts_naive)
             )
-            # --- FIN DEL CAMBIO 4 ---
 
-
-            # 6. Seleccionar solo las columnas que necesitamos para Supabase
-            columnas_para_subir = ['timestamp'] + [col for col in COLUMNS_MAP.values() if col not in ['fecha', 'hora']]
+            # 5. Seleccionar solo las columnas que necesitamos para Supabase
+            columnas_para_subir = ['timestamp'] + [col for col in COLUMNAS_FINALES if col not in ['fecha', 'hora']]
+            
+            # Chequeo final
             columnas_existentes = [col for col in columnas_para_subir if col in df.columns]
             df_final = df[columnas_existentes]
             
-            # 7. Convertir Timestamps a string ISO para Supabase (JSON)
-            # Ahora el string incluirá la zona horaria (ej: "...-05:00")
+            # 6. Convertir Timestamps a string ISO para Supabase (JSON)
             df_final['timestamp'] = df_final['timestamp'].apply(lambda x: x.isoformat())
 
-            # 8. Reemplazar 'NaN' (de Python) con 'None' (de JSON)
+            # 7. Reemplazar 'NaN' (de Python) con 'None' (de JSON)
             df_final = df_final.astype(object).where(pd.notnull(df_final), None)
 
-            # 9. Convertir a un formato de diccionario para Supabase
+            # 8. Convertir a un formato de diccionario para Supabase
             records_to_insert = df_final.to_dict('records')
             
             if not records_to_insert:
@@ -140,7 +150,7 @@ if uploaded_file is not None:
             else:
                 st.write(f"Se procesaron {len(records_to_insert)} registros. Subiendo a Supabase...")
                 
-                # 10. Subir a Supabase con 'upsert'
+                # 9. Subir a Supabase con 'upsert'
                 response = supabase.table('Datos_Estacion_Clima').upsert(
                     records_to_insert, 
                     on_conflict='timestamp'
@@ -153,7 +163,7 @@ if uploaded_file is not None:
     except Exception as e:
         st.error(f"Ocurrió un error al procesar el archivo: {e}")
         st.warning("Verifica el formato del archivo. ¿La cabecera está en la fila 2 (header=1)?")
-        st.info(f"Asegúrate que las columnas {list(COLUMNS_MAP.keys())} existan en tu Excel.")
+        st.info("Asegúrate que el orden de las columnas sea Date, Time, Out Temp, Out Hum, Wind Speed, etc.")
 
 st.divider()
 
@@ -162,7 +172,7 @@ st.divider()
 # ======================================================================
 st.header("Visualización de Datos Climáticos")
 
-@st.cache_data(ttl=600) # Cachear datos por 10 minutos
+@st.cache_data(ttl=600) 
 def cargar_datos_climaticos(start_date, end_date):
     if not supabase:
         st.error("No hay conexión con Supabase.")
@@ -198,11 +208,11 @@ def cargar_datos_climaticos(start_date, end_date):
 today = datetime.now(TZ_PERU).date()
 col_f1, col_f2 = st.columns(2)
 with col_f1:
-    start_date = st.date_input("Fecha de Inicio", today - pd.Timedelta(days=7), max_value=today)
+    # --- [CORRECCIÓN] Poner un rango de fechas por defecto que SÍ tenga datos
+    start_date = st.date_input("Fecha de Inicio", datetime(2025, 11, 4), max_value=today)
 with col_f2:
-    end_date = st.date_input("Fecha de Fin", today, min_value=start_date, max_value=today)
+    end_date = st.date_input("Fecha de Fin", datetime(2025, 11, 5), min_value=start_date, max_value=today)
 
-# --- CORRECCIÓN DE ZONA HORARIA EN FILTRO ---
 # Localizamos las fechas de inicio y fin para que coincidan con los datos de Supabase
 start_datetime = TZ_PERU.localize(datetime.combine(start_date, datetime.min.time()))
 end_datetime = TZ_PERU.localize(datetime.combine(end_date, datetime.max.time()))
