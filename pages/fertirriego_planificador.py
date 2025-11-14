@@ -11,7 +11,8 @@ import re # Para limpiar nombres de columnas
 st.set_page_config(page_title="Jornada de Fertiriego", page_icon="💧🧪", layout="wide")
 
 # --- RUTA SIMPLIFICADA ---
-FILE_PATH = "FRUTALES - EXCEL.xlsx"
+# Asegúrate que este archivo "FRUTALES - EXCEL.xlsx" esté en la misma carpeta que tu app.py
+FILE_PATH = "FRUTALES - EXCEL.xlsx" 
 
 # --- CONEXIÓN A SUPABASE ---
 @st.cache_resource
@@ -70,6 +71,13 @@ def load_recipes_from_excel():
     Devuelve un diccionario ej: {'Urea': 0.036, 'Nitrato de Calcio': 3.32}
     """
     try:
+        # 1. Comprobar si el archivo existe
+        if not os.path.exists(FILE_PATH):
+            st.error(f"Error CRÍTICO: No se encuentra el archivo '{FILE_PATH}'.")
+            st.info("Asegúrate de que el archivo Excel esté en la misma carpeta que el script de Streamlit.")
+            return None
+
+        # 2. Intentar leer el Excel
         df_dosis = pd.read_excel(
             FILE_PATH, 
             sheet_name="DOSIS", 
@@ -168,7 +176,7 @@ if TZ_PERU:
         # --- [HERRAMIENTA DE DEBUG] ---
         if recipes_completas:
             with st.expander("⚠️ DEBUG: Ver Claves de Recetas (desde Hoja 'DOSIS')"):
-                st.write("Ahora debería salir la lista correcta. Si 'Nitrato de Calcio' sigue fallando, copia el nombre de esta lista:")
+                st.write("Si la carga es exitosa, aquí verás los fertilizantes leídos del Excel:")
                 st.write(list(recipes_completas.keys()))
         # --- [FIN DEBUG] ---
 
@@ -189,7 +197,7 @@ if TZ_PERU:
             if fert in recipes_completas:
                 receta_de_hoy[fert] = recipes_completas[fert]
             else:
-                st.warning(f"No se encontró la dosis para '{fert}' en la hoja 'DOSIS'.")
+                st.warning(f"No se encontró la dosis para '{fert}' en la hoja 'DOSIS'. Revisa que el nombre coincida.")
         
         st.session_state.receta_de_hoy = receta_de_hoy
 
@@ -225,7 +233,7 @@ with st.expander("Ver dosis DIARIA programada (según Hoja 'DOSIS', g/L/día)"):
 
 
 # Si la tarea falló, no mostramos el resto de la app
-if "ERROR" in st.session_state.tarea_de_hoy:
+if "Error" in st.session_state.tarea_de_hoy: # Corregido para chequear "Error"
      st.error("Error al cargar la app. Revisa los mensajes de error.")
      st.stop()
 elif st.session_state.tarea_de_hoy in ["Día No Laborable"]:
@@ -310,6 +318,7 @@ else:
     
     with rcol2:
         st.subheader("Volumen")
+        # Asumimos 44 macetas por válvula/cama
         vol_sugerido = (st.session_state.get('recomendacion_volumen', 1000.0) * 44) / 1000 
         
         general_vol_aplicado_litros = st.number_input(
@@ -511,7 +520,6 @@ else:
             with gcol1:
                 fig_ph_drenaje = px.line(df_filtrado, x='fecha', y='testigo_ph_drenaje', color='sustrato_testigo',
                                          title="Evolución del pH en Drenaje (Testigo)", markers=True)
-                # --- [CORRECCIÓN DE TIPEO] ---
                 st.plotly_chart(fig_ph_drenaje, use_container_width=True)
             with gcol2:
                 fig_ce_drenaje = px.line(df_filtrado, x='fecha', y='testigo_ce_drenaje', color='sustrato_testigo',
