@@ -63,6 +63,7 @@ MAPEO_NOMBRE_A_COLUMNA_DB = {
     "Boro": "total_boro_g",
     "Nitrato de Calcio": "total_nitrato_de_calcio_g"
 }
+
 @st.cache_data(ttl=600) 
 def load_recipes_from_excel():
     """
@@ -77,14 +78,20 @@ def load_recipes_from_excel():
             return None
 
         # 2. Intentar leer el Excel
+        # --- [CORRECCIÓN DEFINITIVA] ---
+        # La cabecera está en la Fila 8 (índice 7)
         df_dosis = pd.read_excel(
             FILE_PATH, 
             sheet_name="DOSIS", 
             header=7 # La Fila 8 contiene los títulos
         )
+        # --- [FIN DE CORRECCIÓN] ---
         
         # Renombrar por POSICIÓN
         current_cols = df_dosis.columns.tolist()
+        
+        # Col A (idx 0): FERTILIZANTE
+        # Col F (idx 5): gramo / Litro / dia
         
         if len(current_cols) < 6:
             st.error("Error: La hoja 'DOSIS' no tiene suficientes columnas. Se esperan al menos 6.")
@@ -100,15 +107,12 @@ def load_recipes_from_excel():
         
         # --- [Función de Limpieza Agresiva] ---
         def clean_string(s):
-            # 1. Si la celda está vacía (NaN), devolverla vacía para ser eliminada
             if pd.isna(s):
                 return pd.NA
-            
-            # 2. Si no está vacía, limpiarla
-            text = str(s).split('(')[0] # Quitar paréntesis
-            text = text.replace(u'\xa0', u' ') # Reemplazar espacio 'no-breaking'
-            text = re.sub(r'\s+', ' ', text) # Reemplazar múltiples espacios por uno solo
-            return text.strip() # Quitar espacios al inicio/final
+            text = str(s).split('(')[0] 
+            text = text.replace(u'\xa0', u' ') 
+            text = re.sub(r'\s+', ' ', text) 
+            return text.strip() 
             
         df_dosis['FERTILIZANTE_LIMPIO'] = df_dosis['FERTILIZANTE_LIMPIO'].apply(clean_string)
         # --- [FIN LIMPIEZA] ---
@@ -165,13 +169,7 @@ if TZ_PERU:
         # 1. Cargar todas las recetas desde la hoja DOSIS
         recipes_completas = load_recipes_from_excel()
         
-        # --- [HERRAMIENTA DE DEBUG] ---
-        # Borramos el 'if' para forzar que aparezca
-        # ASEGÚRATE DE QUE LA LÍNEA 'with st.expander' ESTÉ BIEN ALINEADA
-        with st.expander("⚠️ DEBUG: Ver Claves de Recetas (desde Hoja 'DOSIS')"):
-            st.write("Si la carga es exitosa, aquí verás los fertilizantes leídos del Excel:")
-            st.write(list(recipes_completas.keys()))
-        # --- [FIN DEBUG] ---
+        # --- [HERRAMIENTA DE DEBUG ELIMINADA PARA EVITAR CONFUSIÓN] ---
 
         if recipes_completas is None:
             st.error("No se pudieron cargar las recetas. La app no puede continuar.")
@@ -190,6 +188,7 @@ if TZ_PERU:
             if fert in recipes_completas:
                 receta_de_hoy[fert] = recipes_completas[fert]
             else:
+                # Si el diccionario está vacío, esto dará el error
                 st.warning(f"No se encontró la dosis para '{fert}' en la hoja 'DOSIS'. Revisa que el nombre coincida.")
         
         st.session_state.receta_de_hoy = receta_de_hoy
