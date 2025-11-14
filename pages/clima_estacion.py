@@ -163,8 +163,16 @@ def cargar_datos_climaticos(start_date, end_date):
         
         if response.data:
             df = pd.DataFrame(response.data)
+            
+            # --- [CORRECCIÓN DE ZONA HORARIA] ---
+            # 1. Convertir el texto de Supabase (que está en UTC) a un objeto timestamp
             df['timestamp'] = pd.to_datetime(df['timestamp'])
             
+            # 2. CONVERTIR el timestamp de UTC a la zona horaria de Perú
+            df['timestamp'] = df['timestamp'].dt.tz_convert(TZ_PERU)
+            # --- FIN DE LA CORRECCIÓN ---
+
+            # Convertir columnas a numérico (después de cargar)
             cols_to_convert = ['velocidad_viento', 'humedad_out', 'radiacion_solar', 'temperatura_out', 'uv_index', 'lluvia_rate']
             for col in cols_to_convert:
                 if col in df.columns:
@@ -220,6 +228,7 @@ else:
     max_wind = df_datos['velocidad_viento'].max()
     
     if df_datos['temperatura_out'].notna().any():
+        # Ahora .loc buscará la hora local correcta (ej. 12:00 PM)
         hora_max_temp = df_datos.loc[df_datos['temperatura_out'].idxmax()]['timestamp'].strftime('%d/%m a las %H:%M')
     else:
         hora_max_temp = "N/A"
@@ -237,6 +246,7 @@ else:
     st.write("Junta todos los días seleccionados para mostrar el comportamiento promedio a lo largo de un día.")
     
     df_by_hour = df_datos.copy()
+    # Ahora .dt.hour usará la hora local (ej. 12)
     df_by_hour['hora_del_dia'] = df_by_hour['timestamp'].dt.hour
     df_cycle = df_by_hour.groupby('hora_del_dia').mean(numeric_only=True).reset_index()
     df_cycle['Hora (Formato 24h)'] = df_cycle['hora_del_dia'].apply(lambda h: f"{h:02d}:00")
@@ -259,22 +269,18 @@ else:
     st.divider()
     
     # --- 3. GRÁFICOS CRONOLÓGICOS (LÍNEA DE TIEMPO) ---
-    # --- [CORRECCIÓN: PROMEDIO MÓVIL] ---
     st.subheader("Evolución Cronológica (Promedio Móvil)")
     st.write("Línea de tiempo 'suavizada' de los datos. Muestra todos los días, incluso con vacíos.")
 
-    # Preparar datos: Poner timestamp como índice
     df_plot = df_datos.set_index('timestamp')
     
-    # --- NUEVA LÓGICA DE PROMEDIO MÓVIL ---
-    # '1H' = Ventana de 1 Hora. 'min_periods=1' = calcular incluso si solo hay 1 dato en la ventana.
-    # Esto 'suaviza' los picos locos. Puedes cambiar '1H' por '2H' si quieres más suavizado.
+    # Promedio Móvil de 1 Hora
     df_smooth = df_plot.rolling(window='1H', min_periods=1).mean(numeric_only=True)
-    df_smooth = df_smooth.reset_index() # Devolver 'timestamp' a una columna para Plotly
+    df_smooth = df_smooth.reset_index() 
 
     gcol1, gcol2 = st.columns(2)
     with gcol1:
-        # Usamos 'df_smooth' (los datos suavizados)
+        # Ahora el eje X tendrá la hora local correcta
         fig_temp = px.line(df_smooth, x='timestamp', y='temperatura_out',
                              title='Evolución de Temperatura (Suavizada)',
                              labels={'temperatura_out': 'Temp (°C)', 'timestamp': 'Fecha y Hora'})
@@ -282,7 +288,6 @@ else:
         st.plotly_chart(fig_temp, use_container_width=True)
 
     with gcol2:
-        # Usamos 'df_smooth' (los datos suavizados)
         fig_humedad = px.line(df_smooth, x='timestamp', y='humedad_out',
                                title='Evolución de Humedad (Suavizada)',
                                labels={'humedad_out': 'Humedad (%)', 'timestamp': 'Fecha y Hora'})
@@ -294,7 +299,6 @@ else:
 
     gcol3, gcol4 = st.columns(2)
     with gcol3:
-        # Usamos 'df_smooth' (los datos suavizados)
         fig_radiacion = px.line(df_smooth, x='timestamp', y='radiacion_solar',
                                  title='Evolución de Radiación Solar (Suavizada)',
                                  labels={'radiacion_solar': 'Radiación (W/m²)', 'timestamp': 'Fecha y Hora'})
@@ -302,7 +306,6 @@ else:
         st.plotly_chart(fig_radiacion, use_container_width=True)
 
     with gcol4:
-        # Usamos 'df_smooth' (los datos suavizados)
         fig_viento = px.line(df_smooth, x='timestamp', y='velocidad_viento',
                              title='Evolución de Velocidad del Viento (Suavizada)',
                              labels={'velocidad_viento': 'Velocidad', 'timestamp': 'Fecha y Hora'})
