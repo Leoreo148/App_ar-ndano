@@ -32,11 +32,11 @@ except ImportError:
 
 # ======================================================================
 # SECCIÓN DE CARGA DE DATOS
+# (Esta sección no cambia, es la que ya funcionaba)
 # ======================================================================
 st.title("🌦️ Dashboard de Estación Meteorológica")
 st.write("Sube el archivo de datos (`.xlsx`) de la estación para ingestar y analizar los datos climáticos.")
 
-# --- UPLOADER DE ARCHIVO ---
 uploaded_file = st.file_uploader(
     "Sube tu archivo de datos de la estación (.xlsx)", 
     type=["xlsx"],
@@ -59,8 +59,6 @@ if uploaded_file is not None:
                 st.warning("El archivo está vacío o no se pudo leer.")
                 st.stop()
 
-            # --- CORRECCIÓN CRÍTICA ---
-            # Limpiar primero las filas vacías, usando los nombres de columna originales (por índice)
             col_fecha_original = df.columns[0]
             col_hora_original = df.columns[1]
             df = df.dropna(subset=[col_fecha_original, col_hora_original])
@@ -71,14 +69,12 @@ if uploaded_file is not None:
                 
             st.write(f"Encontrados {len(df)} registros con datos. Procesando...")
 
-            # --- RENOMBRADO POR POSICIÓN ---
             current_cols = df.columns.tolist()
             
             if len(current_cols) < 9:
                 st.error(f"Error: El archivo solo tiene {len(current_cols)} columnas, se esperaban al menos 9 (Date, Time, Temp, Hum, etc.).")
                 st.stop()
 
-            # Mapa de renombrado dinámico por índice
             rename_map = {
                 current_cols[0]: 'fecha',           # 'Date'
                 current_cols[1]: 'hora',            # 'Time'
@@ -93,7 +89,6 @@ if uploaded_file is not None:
 
             df = df.rename(columns=rename_map)
 
-            # Limpiar datos numéricos ('---' -> NaN)
             numeric_cols = [
                 'temperatura_out', 'humedad_out', 'velocidad_viento', 
                 'radiacion_solar', 'uv_index', 'lluvia_rate'
@@ -102,7 +97,6 @@ if uploaded_file is not None:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce')
 
-            # Combinar 'fecha' y 'hora' en un 'timestamp'
             st.write("Procesando timestamp para formato XLSX...")
             
             df['timestamp_naive'] = df.apply(
@@ -113,12 +107,10 @@ if uploaded_file is not None:
                 axis=1
             )
             
-            # Localizar ese timestamp a la zona horaria de Perú
             df['timestamp'] = df['timestamp_naive'].apply(
                 lambda ts_naive: TZ_PERU.localize(ts_naive)
             )
 
-            # Seleccionar solo las columnas que necesitamos para Supabase
             columnas_para_subir = ['timestamp'] + [col for col in COLUMNAS_FINALES if col not in ['fecha', 'hora']]
             columnas_existentes = [col for col in columnas_para_subir if col in df.columns]
             df_final = df[columnas_existentes]
@@ -149,7 +141,7 @@ if uploaded_file is not None:
 st.divider()
 
 # ======================================================================
-# SECCIÓN DE VISUALIZACIÓN DE DATOS
+# SECCIÓN DE VISUALIZACIÓN DE DATOS (REDISEÑADA)
 # ======================================================================
 st.header("Visualización de Datos Climáticos")
 
@@ -185,35 +177,29 @@ def cargar_datos_climaticos(start_date, end_date):
         st.error(f"Error al cargar datos del historial: {e}")
         return pd.DataFrame()
 
-# --- [CORRECCIÓN PRINCIPAL] ---
-# He quitado las fechas fijas (datetime(2025, 11, 4)) y 
-# las he reemplazado por defaults dinámicos (ej. "hace 7 días").
-# Esto evita el error de contradicción de fechas.
-
+# --- Selectores de Fecha ---
 today = datetime.now(TZ_PERU).date()
-# Valor por defecto para la fecha de inicio: Hace 7 días
 default_start = today - pd.Timedelta(days=7)
 
 col_f1, col_f2 = st.columns(2)
 with col_f1:
     start_date = st.date_input(
         "Fecha de Inicio", 
-        default_start, # <-- Default dinámico
+        default_start, 
         max_value=today
     )
 with col_f2:
     end_date = st.date_input(
         "Fecha de Fin", 
-        today, # <-- Default dinámico (hoy)
+        today, 
         min_value=start_date, 
         max_value=today
     )
-# --- FIN DE LA CORRECCIÓN ---
 
-
-# Localizamos las fechas de inicio y fin para que coincidan con los datos de Supabase
 start_datetime = TZ_PERU.localize(datetime.combine(start_date, datetime.min.time()))
 end_datetime = TZ_PERU.localize(datetime.combine(end_date, datetime.max.time()))
+
+# --- [NUEVA LÓGICA DE DASHBOARD] ---
 
 df_datos = cargar_datos_climaticos(start_datetime, end_datetime)
 
@@ -223,53 +209,104 @@ if df_datos.empty:
 else:
     st.success(f"Mostrando {len(df_datos)} registros por minuto entre {start_date.strftime('%d/%m')} y {end_date.strftime('%d/%m')}.")
     
-    # --- Preparar datos para gráficos ---
+    # --- 1. MÉTRICAS CLAVE (KPIs) ---
+    st.subheader("Métricas Clave del Periodo Seleccionado")
+    
+    # Calcular promedios, máximos y mínimos
+    avg_temp = df_datos['temperatura_out'].mean()
+    max_temp = df_datos['temperatura_out'].max()
+    avg_hum = df_datos['humedad_out'].mean()
+    max_hum = df_datos['humedad_out'].max()
+    avg_rad = df_datos['radiacion_solar'].mean()
+    max_rad = df_datos['radiacion_solar'].max()
+    avg_wind = df_datos['velocidad_viento'].mean()
+    max_wind = df_datos['velocidad_viento'].max()
+    
+    # Encontrar la hora del máximo de temperatura
+    hora_max_temp = df_datos.loc[df_datos['temperatura_out'].idxmax()]['timestamp'].strftime('%d/%m a las %H:%M')
+    
+    kpi_cols = st.columns(4)
+    kpi_cols[0].metric("Temp. Promedio", f"{avg_temp:.1f} °C", help=f"Máxima: {max_temp:.1f} °C (el {hora_max_temp})")
+    kpi_cols[1].metric("Humedad Promedio", f"{avg_hum:.1f} %", help=f"Máxima: {max_hum:.1f} %")
+    kpi_cols[2].metric("Radiación Promedio", f"{avg_rad:.1f} W/m²", help=f"Máxima: {max_rad:.1f} W/m²")
+    kpi_cols[3].metric("Viento Promedio", f"{avg_wind:.1f}", help=f"Máxima: {max_wind:.1f}")
+
+    st.divider()
+
+    # --- 2. GRÁFICOS DE CICLO DIARIO (PROMEDIO POR HORA DEL DÍA) ---
+    st.subheader("Análisis de Ciclo Diario (Promedio de las 24h)")
+    st.write("Estos gráficos juntan todos los días seleccionados para mostrar el comportamiento promedio a lo largo de un día.")
+    
+    # Preparar datos: Agrupar por hora del día (0-23)
+    df_by_hour = df_datos.copy()
+    df_by_hour['hora_del_dia'] = df_by_hour['timestamp'].dt.hour
+    df_cycle = df_by_hour.groupby('hora_del_dia').mean(numeric_only=True).reset_index()
+
+    cycle_cols = st.columns(2)
+    with cycle_cols[0]:
+        fig_cycle_temp = px.line(df_cycle, x='hora_del_dia', y='temperatura_out',
+                                 title='Ciclo Diario de Temperatura',
+                                 labels={'hora_del_dia': 'Hora del Día', 'temperatura_out': 'Temp Promedio (°C)'},
+                                 markers=True)
+        fig_cycle_temp.update_xaxes(range=[-0.5, 23.5]) # Mostrar las 24 horas
+        st.plotly_chart(fig_cycle_temp, use_container_width=True)
+        
+    with cycle_cols[1]:
+        fig_cycle_hum = px.line(df_cycle, x='hora_del_dia', y='humedad_out',
+                                 title='Ciclo Diario de Humedad',
+                                 labels={'hora_del_dia': 'Hora del Día', 'humedad_out': 'Humedad Promedio (%)'},
+                                 markers=True)
+        fig_cycle_hum.update_xaxes(range=[-0.5, 23.5])
+        st.plotly_chart(fig_cycle_hum, use_container_width=True)
+        
+    st.divider()
+    
+    # --- 3. GRÁFICOS CRONOLÓGICOS (LÍNEA DE TIEMPO) ---
+    st.subheader("Evolución Cronológica (Promedios por Hora)")
+    st.write("Esta es la línea de tiempo de los datos, promediados por hora.")
+    
+    # Preparar datos: Promedio por hora (resample)
     df_plot = df_datos.set_index('timestamp')
     df_hourly = df_plot.resample('H').mean(numeric_only=True).reset_index()
-    df_wind_dir = df_plot['direccion_viento'].value_counts().reset_index()
-    df_wind_dir.columns = ['direccion', 'conteo']
 
-    # --- Gráficos ---
-    st.subheader("Tendencias Climáticas (Promedios por Hora)")
-    
-    gcol1, gcol2, gcol3 = st.columns(3)
-    
+    gcol1, gcol2 = st.columns(2)
     with gcol1:
         fig_temp = px.line(df_hourly, x='timestamp', y='temperatura_out',
-                             title='Temperatura Exterior (Promedio por Hora)',
+                             title='Evolución de Temperatura',
                              labels={'temperatura_out': 'Temp (°C)', 'timestamp': 'Fecha y Hora'})
         fig_temp.update_traces(line=dict(color='red'))
         st.plotly_chart(fig_temp, use_container_width=True)
 
     with gcol2:
-        fig_viento = px.line(df_hourly, x='timestamp', y='velocidad_viento',
-                             title='Velocidad del Viento (Promedio por Hora)',
-                             labels={'velocidad_viento': 'Velocidad (km/h o m/s)', 'timestamp': 'Fecha y Hora'})
-        fig_viento.update_traces(line=dict(color='blue'))
-        st.plotly_chart(fig_viento, use_container_width=True)
-
-    with gcol3:
         fig_humedad = px.line(df_hourly, x='timestamp', y='humedad_out',
-                               title='Humedad Exterior (Promedio por Hora)',
+                               title='Evolución de Humedad',
                                labels={'humedad_out': 'Humedad (%)', 'timestamp': 'Fecha y Hora'})
         fig_humedad.update_traces(line=dict(color='green'))
         st.plotly_chart(fig_humedad, use_container_width=True)
 
-    st.subheader("Otras Métricas")
-    gcol4, gcol5 = st.columns(2)
+    # --- 4. OTRAS MÉTRICAS ---
+    st.subheader("Otras Métricas Cronológicas")
 
-    with gcol4:
+    # Preparar datos de viento (sin agrupar)
+    df_wind_dir = df_plot['direccion_viento'].value_counts().reset_index()
+    df_wind_dir.columns = ['direccion', 'conteo']
+
+    gcol3, gcol4 = st.columns(2)
+    with gcol3:
         fig_radiacion = px.line(df_hourly, x='timestamp', y='radiacion_solar',
-                                 title='Radiación Solar (Promedio por Hora)',
+                                 title='Evolución de Radiación Solar',
                                  labels={'radiacion_solar': 'Radiación (W/m²)', 'timestamp': 'Fecha y Hora'})
         fig_radiacion.update_traces(line=dict(color='orange'))
         st.plotly_chart(fig_radiacion, use_container_width=True)
 
-    with gcol5:
+    with gcol4:
         fig_dir_viento = px.bar(df_wind_dir, x='direccion', y='conteo',
-                                 title='Frecuencia Dirección del Viento',
+                                 title='Frecuencia Dirección del Viento (Total Periodo)',
                                  labels={'conteo': 'Número de Registros', 'direccion': 'Dirección'})
         st.plotly_chart(fig_dir_viento, use_container_width=True)
-
-    st.subheader("Datos Crudos (Tabla)")
-    st.dataframe(df_datos, use_container_width=True)
+    
+    st.divider()
+    
+    # --- 5. DATOS CRUDOS ---
+    with st.expander("Ver Datos Crudos (Tabla)"):
+        st.dataframe(df_datos, use_container_width=True)
