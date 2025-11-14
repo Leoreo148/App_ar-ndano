@@ -10,34 +10,8 @@ import re # Para limpiar nombres de columnas
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Jornada de Fertiriego", page_icon="💧🧪", layout="wide")
 
-
-# --- [NUEVO] DICCIONARIO DE RECETAS (mg/L/día) ---
-# Basado en los datos del Excel (Sem 44/45)
-RECETAS_FIJAS_MG_L_DIA = {
-    "Fertilización Grupo 1": {
-        "Urea": 36.25922888,
-        "Fosfato Monoamónico": 4.918032787,
-        "Sulf. de Potasio": 48.07692308
-    },
-    "Fertilización Grupo 2": {
-        "Sulf. de Magnesio": 37.5,
-        "Sulf. de Cobre": 0.4,
-        "Sulf. de Manganeso": 2.580645161,
-        "Sulf. de Zinc": 0.6976744186
-    },
-    "Fertilización Grupo 3": {
-        "Boro": 4.571428571
-    },
-    "Fertilización Grupo 4": {
-        "Nitrato de Calcio": 75.47169811
-    },
-    # Tareas sin fertilizantes
-    "Recuperación / Sin Riego": {},
-    "Lavado de Sales": {},
-    "Día No Laborable": {},
-    "Riego (Sin grupo)": {} # Fallback
-}
-
+# --- RUTA SIMPLIFICADA ---
+FILE_PATH = "FRUTALES - EXCEL.xlsx"
 
 # --- CONEXIÓN A SUPABASE ---
 @st.cache_resource
@@ -60,72 +34,93 @@ except ImportError:
     st.error("Se necesita la librería 'pytz'. Instálala con: pip install pytz")
     TZ_PERU = None
 
-# --- RUTA SIMPLIFICADA ---
-FILE_PATH = "FRUTALES - EXCEL.xlsx"
+# ======================================================================
+# --- [NUEVA LÓGICA] ---
+# ======================================================================
 
-# ======================================================================
-# --- FUNCIÓN DE CRONOGRAMA (MODIFICADA) ---
-# ======================================================================
+# Mapa de Tareas a los nombres de Fertilizantes (de la hoja DOSIS)
+TASK_TO_FERTILIZERS_MAP = {
+    "Fertilización Grupo 1": ["Urea", "Fosfato Monoamónico", "Sulf. de Potasio"],
+    "Fertilización Grupo 2": ["Sulf. de Magnesio", "Sulf. de Cobre", "Sulf. de Manganeso", "Sulf. de Zinc"],
+    "Fertilización Grupo 3": ["Boro"],
+    "Fertilización Grupo 4": ["Nitrato de Calcio"],
+    "Recuperación / Sin Riego": [],
+    "Lavado de Sales": [],
+    "Día No Laborable": [],
+    "Riego (Sin grupo)": []
+}
+
+# Mapeo de nombres de receta a nombres de columna en Supabase
+MAPEO_NOMBRE_A_COLUMNA_DB = {
+    "Urea": "total_urea_g",
+    "Fosfato Monoamónico": "total_fosfato_monoamonico_g",
+    "Sulf. de Potasio": "total_sulf_de_potasio_g",
+    "Sulf. de Magnesio": "total_sulf_de_magnesio_g",
+    "Sulf. de Cobre": "total_sulf_de_cobre_g",
+    "Sulf. de Manganeso": "total_sulf_de_manganeso_g",
+    "Sulf. de Zinc": "total_sulf_de_zinc_g",
+    "Boro": "total_boro_g",
+    "Nitrato de Calcio": "total_nitrato_de_calcio_g"
+}
+
 @st.cache_data(ttl=600) 
-def load_cronograma(fecha_hoy):
+def load_recipes_from_excel():
     """
-    1. Determina la TAREA según el día de la semana.
-    2. (Opcional) Busca en el Excel la fila de esa FECHA para validar.
-    Devuelve (tarea_str, datos_fila_excel)
+    Lee la hoja 'DOSIS' del Excel para obtener las recetas.
+    Devuelve un diccionario ej: {'Urea': 36.25, 'Nitrato de Calcio': 75.47}
     """
-    
-    # --- 1. Determinar Tarea por Día de la Semana ---
+    try:
+        df_dosis = pd.read_excel(
+            FILE_PATH, 
+            sheet_name="DOSIS", 
+            header=6 # La Fila 7 contiene los títulos
+        )
+        
+        # Limpiar nombres de fertilizantes (ej. "Urea (CO(NH2)2)" -> "Urea")
+        df_dosis['FERTILIZANTE'] = df_dosis['FERTILIZANTE'].apply(lambda x: str(x).split('(')[0].strip())
+        
+        # Convertir la columna de dosis a numérico
+        df_dosis['mg / Litro (ppm)'] = pd.to_numeric(df_dosis['mg / Litro (ppm)'], errors='coerce')
+        
+        # Filtrar filas que no tengan fertilizante o dosis
+        df_dosis = df_dosis.dropna(subset=['FERTILIZANTE', 'mg / Litro (ppm)'])
+        
+        # Convertir a diccionario
+        recipes = pd.Series(df_dosis['mg / Litro (ppm)'].values, index=df_dosis['FERTILIZANTE']).to_dict()
+        
+        return recipes
+        
+    except Exception as e:
+        st.error(f"Error CRÍTICO al leer la hoja 'DOSIS' del Excel: {e}")
+        st.info("Asegúrate que la hoja 'DOSIS' exista y la cabecera esté en la Fila 7.")
+        return None
+
+# --- FUNCIÓN DE CRONOGRAMA (Simplificada) ---
+@st.cache_data(ttl=600) 
+def get_task_for_today(fecha_hoy):
+    """
+    Determina la TAREA según el día de la semana.
+    """
     dia_semana = fecha_hoy.weekday() # Lunes=0, Martes=1, ..., Domingo=6
     
     if dia_semana == 0:
-        tarea_str = "Fertilización Grupo 1"
+        return "Fertilización Grupo 1"
     elif dia_semana == 1:
-        tarea_str = "Fertilización Grupo 2"
+        return "Fertilización Grupo 2"
     elif dia_semana == 2:
-        tarea_str = "Fertilización Grupo 3"
+        return "Fertilización Grupo 3"
     elif dia_semana == 3:
-        tarea_str = "Fertilización Grupo 4"
+        return "Fertilización Grupo 4"
     elif dia_semana == 4:
-        tarea_str = "Recuperación / Sin Riego"
+        return "Recuperación / Sin Riego"
     elif dia_semana == 5:
-        tarea_str = "Lavado de Sales"
+        return "Lavado de Sales"
     elif dia_semana == 6:
-        tarea_str = "Día No Laborable"
+        return "Día No Laborable"
     
-    # --- 2. Cargar Excel solo para validar si la fecha existe ---
-    # Ya no usamos el Excel para las *dosis*, solo para el registro.
-    
-    sheet_name = "CRONOGRAMA"
-    
-    try:
-        df = pd.read_excel(
-            FILE_PATH, 
-            sheet_name=sheet_name, 
-            header=5
-        )
-        
-        df = df.rename(columns={'Unnamed: 3': 'FECHA'})
-        df = df.dropna(subset=['FECHA'])
-        df['FECHA'] = pd.to_datetime(df['FECHA']).dt.date
-        
-        task_row_df = df[df['FECHA'] == fecha_hoy]
-        
-        if task_row_df.empty:
-            # No se encontró la fecha de hoy en el Excel.
-            st.warning(f"Se asignó la tarea '{tarea_str}' por ser {fecha_hoy.strftime('%A')}, pero no se encontró la fecha {fecha_hoy} en el Excel. Se usarán las dosis fijas.")
-            # Devolvemos 'None' para la fila, pero la tarea sigue
-            return tarea_str, None
+    return "Riego (Sin grupo)"
 
-        task_row_data = task_row_df.iloc[0]
-        return tarea_str, task_row_data
-
-    except FileNotFoundError:
-        st.error(f"Error 'FileNotFoundError': No se encontró el archivo en la ruta: '{FILE_PATH}'.")
-        return "ERROR: Archivo no encontrado", None
-    except Exception as e:
-        st.error(f"Error al procesar el cronograma desde Excel: {e}")
-        return "ERROR AL PROCESAR CRONOGRAMA", None
-# --- FIN DE LA FUNCIÓN ---
+# --- FIN DE LA NUEVA LÓGICA ---
 
 
 # --- LÓGICA PRINCIPAL (PASO 1) ---
@@ -133,15 +128,29 @@ if TZ_PERU:
     try:
         fecha_actual_peru = datetime.now(TZ_PERU).date()
         
-        # Obtenemos la tarea del día y la fila del excel (aunque ya no la usemos para dosis)
-        tarea_de_hoy, datos_fila_excel = load_cronograma(fecha_actual_peru) 
+        # 1. Cargar todas las recetas desde la hoja DOSIS
+        recipes_completas = load_recipes_from_excel()
         
+        if recipes_completas is None:
+            st.error("No se pudieron cargar las recetas. La app no puede continuar.")
+            st.stop()
+            
+        # 2. Obtener la tarea de hoy (ej. "Fertilización Grupo 2")
+        tarea_de_hoy = get_task_for_today(fecha_actual_peru)
         st.session_state.tarea_de_hoy = tarea_de_hoy
-        st.session_state.datos_fila_excel = datos_fila_excel # Guardamos por si acaso
         
-        # --- [NUEVO] ---
-        # Guardamos la RECETA FIJA en session_state también
-        st.session_state.receta_de_hoy = RECETAS_FIJAS_MG_L_DIA.get(tarea_de_hoy, {})
+        # 3. Obtener la lista de fertilizantes para la tarea de hoy
+        fertilizers_para_hoy = TASK_TO_FERTILIZERS_MAP.get(tarea_de_hoy, [])
+        
+        # 4. Construir la receta específica para hoy
+        receta_de_hoy = {}
+        for fert in fertilizers_para_hoy:
+            if fert in recipes_completas:
+                receta_de_hoy[fert] = recipes_completas[fert]
+            else:
+                st.warning(f"No se encontró la dosis para '{fert}' en la hoja 'DOSIS'.")
+        
+        st.session_state.receta_de_hoy = receta_de_hoy
 
     except Exception as e:
         st.error(f"Error obteniendo fecha o cargando cronograma: {e}")
@@ -158,9 +167,8 @@ st.header("Paso 1: Tarea Programada")
 st.info(f"Tarea para hoy ({fecha_actual_peru.strftime('%d/%m/%Y')}): **{st.session_state.tarea_de_hoy}**")
 
 
-# --- [MODIFICADO] Mostrar dosis del día ---
-# Ahora usa la receta fija guardada en st.session_state.receta_de_hoy
-with st.expander("Ver dosis DIARIA programada (según receta fija, mg/L/día)"):
+# --- Mostrar dosis del día (Ahora desde la hoja DOSIS) ---
+with st.expander("Ver dosis DIARIA programada (según Hoja 'DOSIS', mg/L/día)"):
     
     receta_actual = st.session_state.get('receta_de_hoy', {})
     
@@ -177,7 +185,7 @@ with st.expander("Ver dosis DIARIA programada (según receta fija, mg/L/día)"):
 
 # Si la tarea falló, no mostramos el resto de la app
 if "ERROR" in st.session_state.tarea_de_hoy:
-     st.error("No se pudo leer el cronograma. Revisa el error de arriba y asegúrate de que 'FRUTALES - EXCEL.xlsx' esté en la raíz.")
+     st.error("Error al cargar la app. Revisa los mensajes de error.")
      st.stop()
 elif st.session_state.tarea_de_hoy in ["Día No Laborable"]:
     st.success(f"¡Hoy es {st.session_state.tarea_de_hoy}! No hay tareas de fertiriego.")
@@ -292,8 +300,7 @@ else:
     current_vol_litros = general_vol_aplicado_litros
     current_dias = dias_aplicados
     
-    # --- [MODIFICADO] ---
-    # Usamos la receta fija de la tarea de hoy
+    # Usamos la receta de hoy (cargada de la hoja DOSIS)
     receta_para_calculo = st.session_state.get('receta_de_hoy', {})
 
     st.subheader("Dosis Total de Fertilizante a aplicar en Bidón")
@@ -302,39 +309,28 @@ else:
     if not receta_para_calculo:
         st.info(f"La tarea de hoy ({st.session_state.tarea_de_hoy}) no tiene fertilizantes programados.")
     else:
-        # Mapeo de nombres de receta a nombres de columna en Supabase
-        # ESTO ES FIJO
-        mapeo_nombre_a_columna_db = {
-            "Urea": "total_urea_g",
-            "Fosfato Monoamónico": "total_fosfato_monoamonico_g",
-            "Sulf. de Potasio": "total_sulf_de_potasio_g",
-            "Sulf. de Magnesio": "total_sulf_de_magnesio_g",
-            "Sulf. de Cobre": "total_sulf_de_cobre_g",
-            "Sulf. de Manganeso": "total_sulf_de_manganeso_g",
-            "Sulf. de Zinc": "total_sulf_de_zinc_g",
-            "Boro": "total_boro_g",
-            "Nitrato de Calcio": "total_nitrato_de_calcio_g"
-        }
         
         # Diccionario para guardar los totales que irán a Supabase
         # Inicializamos *todas* las columnas en 0.0
-        calculos_finales_g = {col: 0.0 for col in mapeo_nombre_a_columna_db.values()}
+        calculos_finales_g = {col: 0.0 for col in MAPEO_NOMBRE_A_COLUMNA_DB.values()}
         
         # Lista para el DataFrame que se mostrará en pantalla
         display_data = []
 
-        # Iteramos sobre la RECETA FIJA
+        # Iteramos sobre la RECETA FIJA de hoy
         for nombre_fertilizante, dosis_mg_l_dia in receta_para_calculo.items():
             
+            # --- CÁLCULO (El que siempre quisimos) ---
             # 1. (mg/L/día) * días = mg/L totales
             dosis_total_mg_l = dosis_mg_l_dia * current_dias
             # 2. (mg/L) * L = mg totales
             total_mg = dosis_total_mg_l * current_vol_litros
             # 3. mg / 1000 = g totales
             total_g = total_mg / 1000.0
+            # --- FIN CÁLCULO ---
             
             # Guardar para Supabase
-            nombre_col_db = mapeo_nombre_a_columna_db.get(nombre_fertilizante)
+            nombre_col_db = MAPEO_NOMBRE_A_COLUMNA_DB.get(nombre_fertilizante)
             if nombre_col_db:
                 calculos_finales_g[nombre_col_db] = total_g
             
@@ -478,8 +474,6 @@ else:
             with gcol1:
                 fig_ph_drenaje = px.line(df_filtrado, x='fecha', y='testigo_ph_drenaje', color='sustrato_testigo',
                                          title="Evolución del pH en Drenaje (Testigo)", markers=True)
-                # --- [CORRECCIÓN PRINCIPAL] ---
-                # Cambiar 'fig_axph_drenaje' por 'fig_ph_drenaje'
                 st.plotly_chart(fig_ph_drenaje, use_container_width=True)
             with gcol2:
                 fig_ce_drenaje = px.line(df_filtrado, x='fecha', y='testigo_ce_drenaje', color='sustrato_testigo',
