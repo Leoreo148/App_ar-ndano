@@ -78,44 +78,53 @@ def load_recipes_from_excel():
             return None
 
         # 2. Intentar leer el Excel
+        # --- [CORRECCIÓN APLICADA AQUÍ] ---
+        # La cabecera estaba en la Fila 8 (índice 7), no en la Fila 7.
         df_dosis = pd.read_excel(
             FILE_PATH, 
             sheet_name="DOSIS", 
-            header=6 # La Fila 7 contiene los títulos
+            header=7 # La Fila 8 contiene los títulos
         )
+        # --- [FIN DE CORRECCIÓN] ---
         
-        # --- [INICIO DE DEBUG FORZADO] ---
-        st.error("--- DEBUG ---")
-        st.write("Datos crudos leídos del Excel (usando Fila 7 como cabecera):")
-        st.dataframe(df_dosis.head(20), use_container_width=True)
-        st.info(f"Nombres de columnas leídos: {df_dosis.columns.tolist()}")
-        st.stop() # Detenemos la app aquí para analizar
-        # --- [FIN DE DEBUG FORZADO] ---
-        
-
         # Renombrar por POSICIÓN
         current_cols = df_dosis.columns.tolist()
+        
+        # --- [CORRECCIÓN CRÍTICA 1] ---
+        # Col A (idx 0): FERTILIZANTE
+        # Col E (idx 4): gramo / Litro
+        # Col F (idx 5): gramo / Litro / dia  <-- ¡ESTA ES LA QUE QUEREMOS!
         
         if len(current_cols) < 6:
             st.error("Error: La hoja 'DOSIS' no tiene suficientes columnas. Se esperan al menos 6.")
             return None
         
-        col_fert_original = current_cols[0]  # Columna A (FERTILIZANTE)
-        col_dosis_original = current_cols[5] # Columna F (gramo / Litro / dia)
+        # --- [CORRECCIÓN DE LÓGICA DE NOMBRES] ---
+        # En lugar de renombrar por índice, ahora usaremos los nombres leídos
+        # (Pandas puede haber limpiado los nombres, ej: "gramo / Litro / dia")
+        
+        # Buscamos el nombre de la primera columna (Fertilizante)
+        col_fert_original = current_cols[0] 
+        # Buscamos el nombre de la SEXTA columna (g/L/dia)
+        col_dosis_original = current_cols[5] 
+        # --- [FIN CORRECCIÓN DE LÓGICA] ---
         
         df_dosis = df_dosis.rename(columns={
             col_fert_original: 'FERTILIZANTE_LIMPIO',
-            col_dosis_original: 'DOSIS_G_L_DIA' 
+            col_dosis_original: 'DOSIS_G_L_DIA' # Renombrado a Gramos/Litro/Día
         })
         
         # --- [Función de Limpieza Agresiva] ---
         def clean_string(s):
+            # 1. Si la celda está vacía (NaN), devolverla vacía para ser eliminada
             if pd.isna(s):
                 return pd.NA
-            text = str(s).split('(')[0] 
-            text = text.replace(u'\xa0', u' ') 
-            text = re.sub(r'\s+', ' ', text) 
-            return text.strip() 
+            
+            # 2. Si no está vacía, limpiarla
+            text = str(s).split('(')[0] # Quitar paréntesis
+            text = text.replace(u'\xa0', u' ') # Reemplazar espacio 'no-breaking'
+            text = re.sub(r'\s+', ' ', text) # Reemplazar múltiples espacios por uno solo
+            return text.strip() # Quitar espacios al inicio/final
             
         df_dosis['FERTILIZANTE_LIMPIO'] = df_dosis['FERTILIZANTE_LIMPIO'].apply(clean_string)
         # --- [FIN LIMPIEZA] ---
@@ -133,7 +142,7 @@ def load_recipes_from_excel():
         
     except Exception as e:
         st.error(f"Error CRÍTICO al leer la hoja 'DOSIS' del Excel: {e}")
-        st.info("Asegúrate que la hoja 'DOSIS' exista y la cabecera esté en la Fila 7.")
+        st.info("Asegúrate que la hoja 'DOSIS' exista y la cabecera esté en la Fila 8.")
         return None
     
 # --- FUNCIÓN DE CRONOGRAMA (Simplificada) ---
