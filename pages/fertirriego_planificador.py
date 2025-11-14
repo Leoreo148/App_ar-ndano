@@ -76,29 +76,29 @@ def load_recipes_from_excel():
             header=6 # La Fila 7 contiene los títulos
         )
         
-        # --- [CORRECCIÓN] ---
-        # Renombrar por POSICIÓN para evitar errores de 'KeyError'
+        # Renombrar por POSICIÓN
         current_cols = df_dosis.columns.tolist()
         
-        # Asumimos que la Col 0 es FERTILIZANTE y la Col 5 es 'mg / Litro (ppm)'
         if len(current_cols) < 6:
             st.error("Error: La hoja 'DOSIS' no tiene suficientes columnas. Se esperan al menos 6.")
             return None
         
-        col_fert_original = current_cols[0]  # Nombre de la Columna A (FERTILIZANTE)
-        col_dosis_original = current_cols[5] # Nombre de la Columna F (mg / Litro (ppm))
+        col_fert_original = current_cols[0]  # Columna A (FERTILIZANTE)
+        col_dosis_original = current_cols[5] # Columna F (mg / Litro (ppm))
         
         df_dosis = df_dosis.rename(columns={
             col_fert_original: 'FERTILIZANTE_LIMPIO',
             col_dosis_original: 'DOSIS_MG_L'
         })
-        # --- [FIN CORRECCIÓN] ---
         
-        # Ahora usamos los nombres limpios
-        
+        # --- [CORRECCIÓN CARÁCTER OCULTO] ---
         # Limpiar nombres de fertilizantes (ej. "Urea (CO(NH2)2)" -> "Urea")
-        df_dosis['FERTILIZANTE_LIMPIO'] = df_dosis['FERTILIZANTE_LIMPIO'].apply(lambda x: str(x).split('(')[0].strip())
-        
+        # Reemplaza espacios 'raros' (u'\xa0') por espacios normales y luego limpia.
+        df_dosis['FERTILIZANTE_LIMPIO'] = df_dosis['FERTILIZANTE_LIMPIO'].apply(
+            lambda x: str(x).split('(')[0].replace(u'\xa0', u' ').strip()
+        )
+        # --- [FIN CORRECCIÓN] ---
+
         # Convertir la columna de dosis a numérico
         df_dosis['DOSIS_MG_L'] = pd.to_numeric(df_dosis['DOSIS_MG_L'], errors='coerce')
         
