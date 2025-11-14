@@ -35,7 +35,7 @@ except ImportError:
     TZ_PERU = None
 
 # ======================================================================
-# --- [NUEVA LÓGICA] ---
+# --- LÓGICA DE CARGA DE RECETAS (CORREGIDA) ---
 # ======================================================================
 
 # Mapa de Tareas a los nombres de Fertilizantes (de la hoja DOSIS)
@@ -76,17 +76,37 @@ def load_recipes_from_excel():
             header=6 # La Fila 7 contiene los títulos
         )
         
+        # --- [CORRECCIÓN] ---
+        # Renombrar por POSICIÓN para evitar errores de 'KeyError'
+        current_cols = df_dosis.columns.tolist()
+        
+        # Asumimos que la Col 0 es FERTILIZANTE y la Col 5 es 'mg / Litro (ppm)'
+        if len(current_cols) < 6:
+            st.error("Error: La hoja 'DOSIS' no tiene suficientes columnas. Se esperan al menos 6.")
+            return None
+        
+        col_fert_original = current_cols[0]  # Nombre de la Columna A (FERTILIZANTE)
+        col_dosis_original = current_cols[5] # Nombre de la Columna F (mg / Litro (ppm))
+        
+        df_dosis = df_dosis.rename(columns={
+            col_fert_original: 'FERTILIZANTE_LIMPIO',
+            col_dosis_original: 'DOSIS_MG_L'
+        })
+        # --- [FIN CORRECCIÓN] ---
+        
+        # Ahora usamos los nombres limpios
+        
         # Limpiar nombres de fertilizantes (ej. "Urea (CO(NH2)2)" -> "Urea")
-        df_dosis['FERTILIZANTE'] = df_dosis['FERTILIZANTE'].apply(lambda x: str(x).split('(')[0].strip())
+        df_dosis['FERTILIZANTE_LIMPIO'] = df_dosis['FERTILIZANTE_LIMPIO'].apply(lambda x: str(x).split('(')[0].strip())
         
         # Convertir la columna de dosis a numérico
-        df_dosis['mg / Litro (ppm)'] = pd.to_numeric(df_dosis['mg / Litro (ppm)'], errors='coerce')
+        df_dosis['DOSIS_MG_L'] = pd.to_numeric(df_dosis['DOSIS_MG_L'], errors='coerce')
         
         # Filtrar filas que no tengan fertilizante o dosis
-        df_dosis = df_dosis.dropna(subset=['FERTILIZANTE', 'mg / Litro (ppm)'])
+        df_dosis = df_dosis.dropna(subset=['FERTILIZANTE_LIMPIO', 'DOSIS_MG_L'])
         
         # Convertir a diccionario
-        recipes = pd.Series(df_dosis['mg / Litro (ppm)'].values, index=df_dosis['FERTILIZANTE']).to_dict()
+        recipes = pd.Series(df_dosis['DOSIS_MG_L'].values, index=df_dosis['FERTILIZANTE_LIMPIO']).to_dict()
         
         return recipes
         
@@ -474,6 +494,7 @@ else:
             with gcol1:
                 fig_ph_drenaje = px.line(df_filtrado, x='fecha', y='testigo_ph_drenaje', color='sustrato_testigo',
                                          title="Evolución del pH en Drenaje (Testigo)", markers=True)
+                # --- [CORRECCIÓN DE TIPEO] ---
                 st.plotly_chart(fig_ph_drenaje, use_container_width=True)
             with gcol2:
                 fig_ce_drenaje = px.line(df_filtrado, x='fecha', y='testigo_ce_drenaje', color='sustrato_testigo',
