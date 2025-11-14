@@ -91,9 +91,13 @@ def load_recipes_from_excel():
             col_dosis_original: 'DOSIS_MG_L'
         })
         
-        # --- [CORRECCIÓN CARÁCTER OCULTO] ---
-        # Limpieza agresiva: Reemplaza múltiples tipos de espacios y limpia
+        # --- [NUEVA FUNCIÓN DE LIMPIEZA] ---
         def clean_string(s):
+            # 1. Si la celda está vacía (NaN, None, etc.), devolverla vacía (pd.NA)
+            if pd.isna(s):
+                return pd.NA
+            
+            # 2. Si no está vacía, limpiarla
             text = str(s).split('(')[0] # Quitar paréntesis
             text = text.replace(u'\xa0', u' ') # Reemplazar espacio 'no-breaking'
             text = re.sub(r'\s+', ' ', text) # Reemplazar múltiples espacios por uno solo
@@ -106,6 +110,7 @@ def load_recipes_from_excel():
         df_dosis['DOSIS_MG_L'] = pd.to_numeric(df_dosis['DOSIS_MG_L'], errors='coerce')
         
         # Filtrar filas que no tengan fertilizante o dosis
+        # Ahora sí eliminará las filas donde FERTILIZANTE_LIMPIO es pd.NA
         df_dosis = df_dosis.dropna(subset=['FERTILIZANTE_LIMPIO', 'DOSIS_MG_L'])
         
         # Convertir a diccionario
@@ -154,10 +159,10 @@ if TZ_PERU:
         # 1. Cargar todas las recetas desde la hoja DOSIS
         recipes_completas = load_recipes_from_excel()
         
-        # --- [NUEVA HERRAMIENTA DE DEBUG] ---
+        # --- [HERRAMIENTA DE DEBUG] ---
         if recipes_completas:
             with st.expander("⚠️ DEBUG: Ver Claves de Recetas (desde Hoja 'DOSIS')"):
-                st.write("Copia el nombre EXACTO de esta lista y pégamelo:")
+                st.write("Ahora debería salir la lista correcta de fertilizantes:")
                 st.write(list(recipes_completas.keys()))
         # --- [FIN DEBUG] ---
 
