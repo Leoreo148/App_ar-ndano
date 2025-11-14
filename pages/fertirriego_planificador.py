@@ -165,7 +165,7 @@ if TZ_PERU:
         # 1. Cargar todas las recetas desde la hoja DOSIS
         recipes_completas = load_recipes_from_excel()
         
-        # --- [HERRAMIENTA DE DEBUG] ---
+        # --- [HERRAMIENTA DE DEBUG] ---       
             with st.expander("⚠️ DEBUG: Ver Claves de Recetas (desde Hoja 'DOSIS')"):
                 st.write("Si la carga es exitosa, aquí verás los fertilizantes leídos del Excel:")
                 st.write(list(recipes_completas.keys()))
