@@ -478,7 +478,9 @@ else:
             with gcol1:
                 fig_ph_drenaje = px.line(df_filtrado, x='fecha', y='testigo_ph_drenaje', color='sustrato_testigo',
                                          title="Evolución del pH en Drenaje (Testigo)", markers=True)
-                st.plotly_chart(fig_axph_drenaje, use_container_width=True)
+                # --- [CORRECCIÓN PRINCIPAL] ---
+                # Cambiar 'fig_axph_drenaje' por 'fig_ph_drenaje'
+                st.plotly_chart(fig_ph_drenaje, use_container_width=True)
             with gcol2:
                 fig_ce_drenaje = px.line(df_filtrado, x='fecha', y='testigo_ce_drenaje', color='sustrato_testigo',
                                          title="Evolución de la CE en Drenaje (Testigo)", markers=True)
