@@ -81,7 +81,8 @@ def load_recipes_from_excel():
             FILE_PATH, 
             sheet_name="DOSIS", 
             header=7 # La Fila 8 contiene los títulos
-        )        
+        )
+        
         # Renombrar por POSICIÓN
         current_cols = df_dosis.columns.tolist()
         
@@ -114,16 +115,6 @@ def load_recipes_from_excel():
 
         # Convertir la columna de dosis a numérico
         df_dosis['DOSIS_G_L_DIA'] = pd.to_numeric(df_dosis['DOSIS_G_L_DIA'], errors='coerce')
-
-        
-        # --- [DEBUG AVANZADO 2.0] ---
-        st.error("--- DEBUG 2.0 ---")
-        st.write("Datos DESPUÉS de limpiar, pero ANTES de filtrar (dropna):")
-        st.dataframe(df_dosis.head(20), use_container_width=True)
-        st.info("Revisa las columnas 'FERTILIZANTE_LIMPIO' y 'DOSIS_G_L_DIA'. Si están vacías (NaN o NaT), serán borradas.")
-        st.stop()
-        # --- [FIN DEBUG AVANZADO] ---
-        
         
         # Filtrar filas que no tengan fertilizante o dosis
         df_dosis = df_dosis.dropna(subset=['FERTILIZANTE_LIMPIO', 'DOSIS_G_L_DIA'])
