@@ -43,7 +43,7 @@ TASK_TO_FERTILIZERS_MAP = {
     "Fertilización Grupo 1": ["Urea", "Fosfato Monoamónico", "Sulf. de Potasio"],
     "Fertilización Grupo 2": ["Sulf. de Magnesio", "Sulf. de Cobre", "Sulf. de Manganeso", "Sulf. de Zinc"],
     "Fertilización Grupo 3": ["Boro"],
-    "Fertilización Grupo 4": ["Nitrato de Calcio"],
+    "Fertilización Grupo 4": ["Nitrato de Calcio"], # <-- Esta es la llave que falla
     "Recuperación / Sin Riego": [],
     "Lavado de Sales": [],
     "Día No Laborable": [],
@@ -60,7 +60,7 @@ MAPEO_NOMBRE_A_COLUMNA_DB = {
     "Sulf. de Manganeso": "total_sulf_de_manganeso_g",
     "Sulf. de Zinc": "total_sulf_de_zinc_g",
     "Boro": "total_boro_g",
-    "Nitrato de Calcio": "total_nitrato_de_calcio_g"
+    "Nitrato de Calcio": "total_nitrato_de_calcio_g" # <-- Esta también debe coincidir
 }
 
 @st.cache_data(ttl=600) 
@@ -92,11 +92,14 @@ def load_recipes_from_excel():
         })
         
         # --- [CORRECCIÓN CARÁCTER OCULTO] ---
-        # Limpiar nombres de fertilizantes (ej. "Urea (CO(NH2)2)" -> "Urea")
-        # Reemplaza espacios 'raros' (u'\xa0') por espacios normales y luego limpia.
-        df_dosis['FERTILIZANTE_LIMPIO'] = df_dosis['FERTILIZANTE_LIMPIO'].apply(
-            lambda x: str(x).split('(')[0].replace(u'\xa0', u' ').strip()
-        )
+        # Limpieza agresiva: Reemplaza múltiples tipos de espacios y limpia
+        def clean_string(s):
+            text = str(s).split('(')[0] # Quitar paréntesis
+            text = text.replace(u'\xa0', u' ') # Reemplazar espacio 'no-breaking'
+            text = re.sub(r'\s+', ' ', text) # Reemplazar múltiples espacios por uno solo
+            return text.strip() # Quitar espacios al inicio/final
+            
+        df_dosis['FERTILIZANTE_LIMPIO'] = df_dosis['FERTILIZANTE_LIMPIO'].apply(clean_string)
         # --- [FIN CORRECCIÓN] ---
 
         # Convertir la columna de dosis a numérico
@@ -151,6 +154,13 @@ if TZ_PERU:
         # 1. Cargar todas las recetas desde la hoja DOSIS
         recipes_completas = load_recipes_from_excel()
         
+        # --- [NUEVA HERRAMIENTA DE DEBUG] ---
+        if recipes_completas:
+            with st.expander("⚠️ DEBUG: Ver Claves de Recetas (desde Hoja 'DOSIS')"):
+                st.write("Copia el nombre EXACTO de esta lista y pégamelo:")
+                st.write(list(recipes_completas.keys()))
+        # --- [FIN DEBUG] ---
+
         if recipes_completas is None:
             st.error("No se pudieron cargar las recetas. La app no puede continuar.")
             st.stop()
