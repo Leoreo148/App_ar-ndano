@@ -212,7 +212,6 @@ else:
     # --- 1. MÉTRICAS CLAVE (KPIs) ---
     st.subheader("Métricas Clave del Periodo Seleccionado")
     
-    # Calcular promedios, máximos y mínimos
     avg_temp = df_datos['temperatura_out'].mean()
     max_temp = df_datos['temperatura_out'].max()
     avg_hum = df_datos['humedad_out'].mean()
@@ -222,8 +221,11 @@ else:
     avg_wind = df_datos['velocidad_viento'].mean()
     max_wind = df_datos['velocidad_viento'].max()
     
-    # Encontrar la hora del máximo de temperatura
-    hora_max_temp = df_datos.loc[df_datos['temperatura_out'].idxmax()]['timestamp'].strftime('%d/%m a las %H:%M')
+    # Encontrar la hora del máximo de temperatura (manejando posible error si todo es NaN)
+    if df_datos['temperatura_out'].notna().any():
+        hora_max_temp = df_datos.loc[df_datos['temperatura_out'].idxmax()]['timestamp'].strftime('%d/%m a las %H:%M')
+    else:
+        hora_max_temp = "N/A"
     
     kpi_cols = st.columns(4)
     kpi_cols[0].metric("Temp. Promedio", f"{avg_temp:.1f} °C", help=f"Máxima: {max_temp:.1f} °C (el {hora_max_temp})")
@@ -234,76 +236,78 @@ else:
     st.divider()
 
     # --- 2. GRÁFICOS DE CICLO DIARIO (PROMEDIO POR HORA DEL DÍA) ---
-    st.subheader("Análisis de Ciclo Diario (Promedio de las 24h)")
-    st.write("Estos gráficos juntan todos los días seleccionados para mostrar el comportamiento promedio a lo largo de un día.")
+    # --- [CORRECCIÓN 1: Etiquetas Claras] ---
+    st.subheader("Promedio de las 24 Horas (Ciclo Diario)")
+    st.write("Junta todos los días seleccionados para mostrar el comportamiento promedio a lo largo de un día.")
     
-    # Preparar datos: Agrupar por hora del día (0-23)
     df_by_hour = df_datos.copy()
     df_by_hour['hora_del_dia'] = df_by_hour['timestamp'].dt.hour
     df_cycle = df_by_hour.groupby('hora_del_dia').mean(numeric_only=True).reset_index()
+    
+    # Crear la etiqueta de texto para la hora (0 -> "00:00")
+    df_cycle['Hora (Formato 24h)'] = df_cycle['hora_del_dia'].apply(lambda h: f"{h:02d}:00")
 
     cycle_cols = st.columns(2)
     with cycle_cols[0]:
-        fig_cycle_temp = px.line(df_cycle, x='hora_del_dia', y='temperatura_out',
+        fig_cycle_temp = px.line(df_cycle, x='Hora (Formato 24h)', y='temperatura_out',
                                  title='Ciclo Diario de Temperatura',
-                                 labels={'hora_del_dia': 'Hora del Día', 'temperatura_out': 'Temp Promedio (°C)'},
+                                 labels={'Hora (Formato 24h)': 'Hora del Día (Promedio)', 'temperatura_out': 'Temp Promedio (°C)'},
                                  markers=True)
-        fig_cycle_temp.update_xaxes(range=[-0.5, 23.5]) # Mostrar las 24 horas
         st.plotly_chart(fig_cycle_temp, use_container_width=True)
         
     with cycle_cols[1]:
-        fig_cycle_hum = px.line(df_cycle, x='hora_del_dia', y='humedad_out',
+        fig_cycle_hum = px.line(df_cycle, x='Hora (Formato 24h)', y='humedad_out',
                                  title='Ciclo Diario de Humedad',
-                                 labels={'hora_del_dia': 'Hora del Día', 'humedad_out': 'Humedad Promedio (%)'},
+                                 labels={'Hora (Formato 24h)': 'Hora del Día (Promedio)', 'humedad_out': 'Humedad Promedio (%)'},
                                  markers=True)
-        fig_cycle_hum.update_xaxes(range=[-0.5, 23.5])
         st.plotly_chart(fig_cycle_hum, use_container_width=True)
         
     st.divider()
     
     # --- 3. GRÁFICOS CRONOLÓGICOS (LÍNEA DE TIEMPO) ---
-    st.subheader("Evolución Cronológica (Promedios por Hora)")
-    st.write("Esta es la línea de tiempo de los datos, promediados por hora.")
-    
-    # Preparar datos: Promedio por hora (resample)
-    df_plot = df_datos.set_index('timestamp')
-    df_hourly = df_plot.resample('H').mean(numeric_only=True).reset_index()
+    # --- [CORRECCIÓN 2: Usar datos crudos, no 'resample'] ---
+    st.subheader("Evolución Cronológica (Datos Minuto a Minuto)")
+    st.write("Esta es la línea de tiempo real de los datos. Puedes hacer zoom para ver detalles.")
 
     gcol1, gcol2 = st.columns(2)
     with gcol1:
-        fig_temp = px.line(df_hourly, x='timestamp', y='temperatura_out',
+        # Usamos 'df_datos' (los datos crudos) en lugar de 'df_hourly'
+        fig_temp = px.line(df_datos, x='timestamp', y='temperatura_out',
                              title='Evolución de Temperatura',
                              labels={'temperatura_out': 'Temp (°C)', 'timestamp': 'Fecha y Hora'})
         fig_temp.update_traces(line=dict(color='red'))
         st.plotly_chart(fig_temp, use_container_width=True)
 
     with gcol2:
-        fig_humedad = px.line(df_hourly, x='timestamp', y='humedad_out',
+        # Usamos 'df_datos' (los datos crudos) en lugar de 'df_hourly'
+        fig_humedad = px.line(df_datos, x='timestamp', y='humedad_out',
                                title='Evolución de Humedad',
                                labels={'humedad_out': 'Humedad (%)', 'timestamp': 'Fecha y Hora'})
         fig_humedad.update_traces(line=dict(color='green'))
         st.plotly_chart(fig_humedad, use_container_width=True)
 
-    # --- 4. OTRAS MÉTRICAS ---
+    # --- 4. OTRAS MÉTRICAS CRONOLÓGICAS ---
+    # --- [CORRECCIÓN 3: Reemplazar gráfico de viento] ---
     st.subheader("Otras Métricas Cronológicas")
-
-    # Preparar datos de viento (sin agrupar)
-    df_wind_dir = df_plot['direccion_viento'].value_counts().reset_index()
-    df_wind_dir.columns = ['direccion', 'conteo']
 
     gcol3, gcol4 = st.columns(2)
     with gcol3:
-        fig_radiacion = px.line(df_hourly, x='timestamp', y='radiacion_solar',
+        # Usamos 'df_datos' (los datos crudos) en lugar de 'df_hourly'
+        fig_radiacion = px.line(df_datos, x='timestamp', y='radiacion_solar',
                                  title='Evolución de Radiación Solar',
                                  labels={'radiacion_solar': 'Radiación (W/m²)', 'timestamp': 'Fecha y Hora'})
         fig_radiacion.update_traces(line=dict(color='orange'))
         st.plotly_chart(fig_radiacion, use_container_width=True)
 
     with gcol4:
-        fig_dir_viento = px.bar(df_wind_dir, x='direccion', y='conteo',
-                                 title='Frecuencia Dirección del Viento (Total Periodo)',
-                                 labels={'conteo': 'Número de Registros', 'direccion': 'Dirección'})
-        st.plotly_chart(fig_dir_viento, use_container_width=True)
+        # Nuevo gráfico de "Evolución de Velocidad del Viento"
+        fig_viento = px.line(df_datos, x='timestamp', y='velocidad_viento',
+                             title='Evolución de Velocidad del Viento',
+                             labels={'velocidad_viento': 'Velocidad', 'timestamp': 'Fecha y Hora'})
+        fig_viento.update_traces(line=dict(color='blue'))
+        st.plotly_chart(fig_viento, use_container_width=True)
+    
+    st.info("Nota: La 'Dirección del Viento' (ej: 92) se registra en grados (0°=Norte, 90°=Este, 180°=Sur, 270°=Oeste).")
     
     st.divider()
     
