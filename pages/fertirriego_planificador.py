@@ -63,7 +63,6 @@ MAPEO_NOMBRE_A_COLUMNA_DB = {
     "Boro": "total_boro_g",
     "Nitrato de Calcio": "total_nitrato_de_calcio_g"
 }
-
 @st.cache_data(ttl=600) 
 def load_recipes_from_excel():
     """
@@ -78,36 +77,20 @@ def load_recipes_from_excel():
             return None
 
         # 2. Intentar leer el Excel
-        # --- [CORRECCIÓN APLICADA AQUÍ] ---
-        # La cabecera estaba en la Fila 8 (índice 7), no en la Fila 7.
         df_dosis = pd.read_excel(
             FILE_PATH, 
             sheet_name="DOSIS", 
             header=7 # La Fila 8 contiene los títulos
-        )
-        # --- [FIN DE CORRECCIÓN] ---
-        
+        )        
         # Renombrar por POSICIÓN
         current_cols = df_dosis.columns.tolist()
-        
-        # --- [CORRECCIÓN CRÍTICA 1] ---
-        # Col A (idx 0): FERTILIZANTE
-        # Col E (idx 4): gramo / Litro
-        # Col F (idx 5): gramo / Litro / dia  <-- ¡ESTA ES LA QUE QUEREMOS!
         
         if len(current_cols) < 6:
             st.error("Error: La hoja 'DOSIS' no tiene suficientes columnas. Se esperan al menos 6.")
             return None
         
-        # --- [CORRECCIÓN DE LÓGICA DE NOMBRES] ---
-        # En lugar de renombrar por índice, ahora usaremos los nombres leídos
-        # (Pandas puede haber limpiado los nombres, ej: "gramo / Litro / dia")
-        
-        # Buscamos el nombre de la primera columna (Fertilizante)
         col_fert_original = current_cols[0] 
-        # Buscamos el nombre de la SEXTA columna (g/L/dia)
         col_dosis_original = current_cols[5] 
-        # --- [FIN CORRECCIÓN DE LÓGICA] ---
         
         df_dosis = df_dosis.rename(columns={
             col_fert_original: 'FERTILIZANTE_LIMPIO',
@@ -131,6 +114,16 @@ def load_recipes_from_excel():
 
         # Convertir la columna de dosis a numérico
         df_dosis['DOSIS_G_L_DIA'] = pd.to_numeric(df_dosis['DOSIS_G_L_DIA'], errors='coerce')
+
+        
+        # --- [DEBUG AVANZADO 2.0] ---
+        st.error("--- DEBUG 2.0 ---")
+        st.write("Datos DESPUÉS de limpiar, pero ANTES de filtrar (dropna):")
+        st.dataframe(df_dosis.head(20), use_container_width=True)
+        st.info("Revisa las columnas 'FERTILIZANTE_LIMPIO' y 'DOSIS_G_L_DIA'. Si están vacías (NaN o NaT), serán borradas.")
+        st.stop()
+        # --- [FIN DEBUG AVANZADO] ---
+        
         
         # Filtrar filas que no tengan fertilizante o dosis
         df_dosis = df_dosis.dropna(subset=['FERTILIZANTE_LIMPIO', 'DOSIS_G_L_DIA'])
