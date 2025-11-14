@@ -166,7 +166,6 @@ if TZ_PERU:
         recipes_completas = load_recipes_from_excel()
         
         # --- [HERRAMIENTA DE DEBUG] ---
-        if recipes_completas:
             with st.expander("⚠️ DEBUG: Ver Claves de Recetas (desde Hoja 'DOSIS')"):
                 st.write("Si la carga es exitosa, aquí verás los fertilizantes leídos del Excel:")
                 st.write(list(recipes_completas.keys()))
