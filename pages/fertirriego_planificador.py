@@ -84,14 +84,17 @@ def load_recipes_from_excel():
             header=6 # La Fila 7 contiene los títulos
         )
         
+        # --- [INICIO DE DEBUG FORZADO] ---
+        st.error("--- DEBUG ---")
+        st.write("Datos crudos leídos del Excel (usando Fila 7 como cabecera):")
+        st.dataframe(df_dosis.head(20), use_container_width=True)
+        st.info(f"Nombres de columnas leídos: {df_dosis.columns.tolist()}")
+        st.stop() # Detenemos la app aquí para analizar
+        # --- [FIN DE DEBUG FORZADO] ---
+        
+
         # Renombrar por POSICIÓN
         current_cols = df_dosis.columns.tolist()
-        
-        # --- [CORRECCIÓN CRÍTICA 1] ---
-        # Leer la columna correcta: 'gramo / Litro / dia'
-        # Col A (idx 0): FERTILIZANTE
-        # Col E (idx 4): gramo / Litro
-        # Col F (idx 5): gramo / Litro / dia  <-- ¡ESTA ES LA QUE QUEREMOS!
         
         if len(current_cols) < 6:
             st.error("Error: La hoja 'DOSIS' no tiene suficientes columnas. Se esperan al menos 6.")
@@ -102,21 +105,17 @@ def load_recipes_from_excel():
         
         df_dosis = df_dosis.rename(columns={
             col_fert_original: 'FERTILIZANTE_LIMPIO',
-            col_dosis_original: 'DOSIS_G_L_DIA' # Renombrado a Gramos/Litro/Día
+            col_dosis_original: 'DOSIS_G_L_DIA' 
         })
-        # --- [FIN CORRECCIÓN 1] ---
         
         # --- [Función de Limpieza Agresiva] ---
         def clean_string(s):
-            # 1. Si la celda está vacía (NaN), devolverla vacía para ser eliminada
             if pd.isna(s):
                 return pd.NA
-            
-            # 2. Si no está vacía, limpiarla
-            text = str(s).split('(')[0] # Quitar paréntesis
-            text = text.replace(u'\xa0', u' ') # Reemplazar espacio 'no-breaking'
-            text = re.sub(r'\s+', ' ', text) # Reemplazar múltiples espacios por uno solo
-            return text.strip() # Quitar espacios al inicio/final
+            text = str(s).split('(')[0] 
+            text = text.replace(u'\xa0', u' ') 
+            text = re.sub(r'\s+', ' ', text) 
+            return text.strip() 
             
         df_dosis['FERTILIZANTE_LIMPIO'] = df_dosis['FERTILIZANTE_LIMPIO'].apply(clean_string)
         # --- [FIN LIMPIEZA] ---
@@ -136,7 +135,7 @@ def load_recipes_from_excel():
         st.error(f"Error CRÍTICO al leer la hoja 'DOSIS' del Excel: {e}")
         st.info("Asegúrate que la hoja 'DOSIS' exista y la cabecera esté en la Fila 7.")
         return None
-
+    
 # --- FUNCIÓN DE CRONOGRAMA (Simplificada) ---
 @st.cache_data(ttl=600) 
 def get_task_for_today(fecha_hoy):
