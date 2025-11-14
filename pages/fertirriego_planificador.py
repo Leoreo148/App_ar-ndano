@@ -43,7 +43,7 @@ TASK_TO_FERTILIZERS_MAP = {
     "Fertilización Grupo 1": ["Urea", "Fosfato Monoamónico", "Sulf. de Potasio"],
     "Fertilización Grupo 2": ["Sulf. de Magnesio", "Sulf. de Cobre", "Sulf. de Manganeso", "Sulf. de Zinc"],
     "Fertilización Grupo 3": ["Boro"],
-    "Fertilización Grupo 4": ["Nitrato de Calcio"], # <-- Esta es la llave que falla
+    "Fertilización Grupo 4": ["Nitrato de Calcio"],
     "Recuperación / Sin Riego": [],
     "Lavado de Sales": [],
     "Día No Laborable": [],
@@ -60,14 +60,14 @@ MAPEO_NOMBRE_A_COLUMNA_DB = {
     "Sulf. de Manganeso": "total_sulf_de_manganeso_g",
     "Sulf. de Zinc": "total_sulf_de_zinc_g",
     "Boro": "total_boro_g",
-    "Nitrato de Calcio": "total_nitrato_de_calcio_g" # <-- Esta también debe coincidir
+    "Nitrato de Calcio": "total_nitrato_de_calcio_g"
 }
 
 @st.cache_data(ttl=600) 
 def load_recipes_from_excel():
     """
     Lee la hoja 'DOSIS' del Excel para obtener las recetas.
-    Devuelve un diccionario ej: {'Urea': 0.036, 'Nitrato de Calcio': 0.075}
+    Devuelve un diccionario ej: {'Urea': 0.036, 'Nitrato de Calcio': 3.32}
     """
     try:
         df_dosis = pd.read_excel(
@@ -80,46 +80,47 @@ def load_recipes_from_excel():
         current_cols = df_dosis.columns.tolist()
         
         # --- [CORRECCIÓN CRÍTICA 1] ---
-        # Leer la columna correcta: 'gramo / Litro'
+        # Leer la columna correcta: 'gramo / Litro / dia'
         # Col A (idx 0): FERTILIZANTE
-        # Col B (idx 1): GRUPO
-        # Col C (idx 2): RIQUEZA...
-        # Col D (idx 3): mg/L (ppm)
-        # Col E (idx 4): gramo / Litro  <-- ¡ESTA ES LA QUE QUEREMOS!
+        # Col E (idx 4): gramo / Litro
+        # Col F (idx 5): gramo / Litro / dia  <-- ¡ESTA ES LA QUE QUEREMOS!
         
-        if len(current_cols) < 5:
-            st.error("Error: La hoja 'DOSIS' no tiene suficientes columnas. Se esperan al menos 5.")
+        if len(current_cols) < 6:
+            st.error("Error: La hoja 'DOSIS' no tiene suficientes columnas. Se esperan al menos 6.")
             return None
         
         col_fert_original = current_cols[0]  # Columna A (FERTILIZANTE)
-        col_dosis_original = current_cols[4] # Columna E (gramo / Litro)
+        col_dosis_original = current_cols[5] # Columna F (gramo / Litro / dia)
         
         df_dosis = df_dosis.rename(columns={
             col_fert_original: 'FERTILIZANTE_LIMPIO',
-            col_dosis_original: 'DOSIS_G_L' # Renombrado a Gramos/Litro
+            col_dosis_original: 'DOSIS_G_L_DIA' # Renombrado a Gramos/Litro/Día
         })
         # --- [FIN CORRECCIÓN 1] ---
         
         # --- [Función de Limpieza Agresiva] ---
         def clean_string(s):
+            # 1. Si la celda está vacía (NaN), devolverla vacía para ser eliminada
             if pd.isna(s):
                 return pd.NA
-            text = str(s).split('(')[0]
-            text = text.replace(u'\xa0', u' ')
-            text = re.sub(r'\s+', ' ', text)
-            return text.strip()
+            
+            # 2. Si no está vacía, limpiarla
+            text = str(s).split('(')[0] # Quitar paréntesis
+            text = text.replace(u'\xa0', u' ') # Reemplazar espacio 'no-breaking'
+            text = re.sub(r'\s+', ' ', text) # Reemplazar múltiples espacios por uno solo
+            return text.strip() # Quitar espacios al inicio/final
             
         df_dosis['FERTILIZANTE_LIMPIO'] = df_dosis['FERTILIZANTE_LIMPIO'].apply(clean_string)
         # --- [FIN LIMPIEZA] ---
 
         # Convertir la columna de dosis a numérico
-        df_dosis['DOSIS_G_L'] = pd.to_numeric(df_dosis['DOSIS_G_L'], errors='coerce')
+        df_dosis['DOSIS_G_L_DIA'] = pd.to_numeric(df_dosis['DOSIS_G_L_DIA'], errors='coerce')
         
         # Filtrar filas que no tengan fertilizante o dosis
-        df_dosis = df_dosis.dropna(subset=['FERTILIZANTE_LIMPIO', 'DOSIS_G_L'])
+        df_dosis = df_dosis.dropna(subset=['FERTILIZANTE_LIMPIO', 'DOSIS_G_L_DIA'])
         
         # Convertir a diccionario
-        recipes = pd.Series(df_dosis['DOSIS_G_L'].values, index=df_dosis['FERTILIZANTE_LIMPIO']).to_dict()
+        recipes = pd.Series(df_dosis['DOSIS_G_L_DIA'].values, index=df_dosis['FERTILIZANTE_LIMPIO']).to_dict()
         
         return recipes
         
@@ -167,7 +168,7 @@ if TZ_PERU:
         # --- [HERRAMIENTA DE DEBUG] ---
         if recipes_completas:
             with st.expander("⚠️ DEBUG: Ver Claves de Recetas (desde Hoja 'DOSIS')"):
-                st.write("Copia el nombre EXACTO de esta lista si 'Nitrato de Calcio' sigue fallando:")
+                st.write("Ahora debería salir la lista correcta. Si 'Nitrato de Calcio' sigue fallando, copia el nombre de esta lista:")
                 st.write(list(recipes_completas.keys()))
         # --- [FIN DEBUG] ---
 
@@ -360,12 +361,9 @@ else:
         for nombre_fertilizante, dosis_g_l_dia in receta_para_calculo.items():
             
             # --- [CORRECCIÓN CRÍTICA 2] ---
-            # Nueva fórmula de cálculo basada en Gramos/Litro
-            
-            # 1. (g/L/día) * días = g/L totales
-            dosis_total_g_l = dosis_g_l_dia * current_dias
-            # 2. (g/L) * L = g totales
-            total_g = dosis_total_g_l * current_vol_litros
+            # Fórmula basada en "gramo / Litro / dia" (Col F)
+            # Unidades: [g / (L * dia)] * [dias] * [L] = g
+            total_g = dosis_g_l_dia * current_dias * current_vol_litros
             # --- FIN CORRECCIÓN 2 ---
             
             # Guardar para Supabase
