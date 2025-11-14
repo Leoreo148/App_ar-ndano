@@ -141,7 +141,7 @@ if uploaded_file is not None:
 st.divider()
 
 # ======================================================================
-# SECCIÓN DE VISUALIZACIÓN DE DATOS (REDISEÑADA)
+# SECCIÓN DE VISUALIZACIÓN DE DATOS
 # ======================================================================
 st.header("Visualización de Datos Climáticos")
 
@@ -199,8 +199,6 @@ with col_f2:
 start_datetime = TZ_PERU.localize(datetime.combine(start_date, datetime.min.time()))
 end_datetime = TZ_PERU.localize(datetime.combine(end_date, datetime.max.time()))
 
-# --- [NUEVA LÓGICA DE DASHBOARD] ---
-
 df_datos = cargar_datos_climaticos(start_datetime, end_datetime)
 
 if df_datos.empty:
@@ -221,7 +219,6 @@ else:
     avg_wind = df_datos['velocidad_viento'].mean()
     max_wind = df_datos['velocidad_viento'].max()
     
-    # Encontrar la hora del máximo de temperatura (manejando posible error si todo es NaN)
     if df_datos['temperatura_out'].notna().any():
         hora_max_temp = df_datos.loc[df_datos['temperatura_out'].idxmax()]['timestamp'].strftime('%d/%m a las %H:%M')
     else:
@@ -236,15 +233,12 @@ else:
     st.divider()
 
     # --- 2. GRÁFICOS DE CICLO DIARIO (PROMEDIO POR HORA DEL DÍA) ---
-    # --- [CORRECCIÓN 1: Etiquetas Claras] ---
     st.subheader("Promedio de las 24 Horas (Ciclo Diario)")
     st.write("Junta todos los días seleccionados para mostrar el comportamiento promedio a lo largo de un día.")
     
     df_by_hour = df_datos.copy()
     df_by_hour['hora_del_dia'] = df_by_hour['timestamp'].dt.hour
     df_cycle = df_by_hour.groupby('hora_del_dia').mean(numeric_only=True).reset_index()
-    
-    # Crear la etiqueta de texto para la hora (0 -> "00:00")
     df_cycle['Hora (Formato 24h)'] = df_cycle['hora_del_dia'].apply(lambda h: f"{h:02d}:00")
 
     cycle_cols = st.columns(2)
@@ -265,44 +259,52 @@ else:
     st.divider()
     
     # --- 3. GRÁFICOS CRONOLÓGICOS (LÍNEA DE TIEMPO) ---
-    # --- [CORRECCIÓN 2: Usar datos crudos, no 'resample'] ---
-    st.subheader("Evolución Cronológica (Datos Minuto a Minuto)")
-    st.write("Esta es la línea de tiempo real de los datos. Puedes hacer zoom para ver detalles.")
+    # --- [CORRECCIÓN: PROMEDIO MÓVIL] ---
+    st.subheader("Evolución Cronológica (Promedio Móvil)")
+    st.write("Línea de tiempo 'suavizada' de los datos. Muestra todos los días, incluso con vacíos.")
+
+    # Preparar datos: Poner timestamp como índice
+    df_plot = df_datos.set_index('timestamp')
+    
+    # --- NUEVA LÓGICA DE PROMEDIO MÓVIL ---
+    # '1H' = Ventana de 1 Hora. 'min_periods=1' = calcular incluso si solo hay 1 dato en la ventana.
+    # Esto 'suaviza' los picos locos. Puedes cambiar '1H' por '2H' si quieres más suavizado.
+    df_smooth = df_plot.rolling(window='1H', min_periods=1).mean(numeric_only=True)
+    df_smooth = df_smooth.reset_index() # Devolver 'timestamp' a una columna para Plotly
 
     gcol1, gcol2 = st.columns(2)
     with gcol1:
-        # Usamos 'df_datos' (los datos crudos) en lugar de 'df_hourly'
-        fig_temp = px.line(df_datos, x='timestamp', y='temperatura_out',
-                             title='Evolución de Temperatura',
+        # Usamos 'df_smooth' (los datos suavizados)
+        fig_temp = px.line(df_smooth, x='timestamp', y='temperatura_out',
+                             title='Evolución de Temperatura (Suavizada)',
                              labels={'temperatura_out': 'Temp (°C)', 'timestamp': 'Fecha y Hora'})
         fig_temp.update_traces(line=dict(color='red'))
         st.plotly_chart(fig_temp, use_container_width=True)
 
     with gcol2:
-        # Usamos 'df_datos' (los datos crudos) en lugar de 'df_hourly'
-        fig_humedad = px.line(df_datos, x='timestamp', y='humedad_out',
-                               title='Evolución de Humedad',
+        # Usamos 'df_smooth' (los datos suavizados)
+        fig_humedad = px.line(df_smooth, x='timestamp', y='humedad_out',
+                               title='Evolución de Humedad (Suavizada)',
                                labels={'humedad_out': 'Humedad (%)', 'timestamp': 'Fecha y Hora'})
         fig_humedad.update_traces(line=dict(color='green'))
         st.plotly_chart(fig_humedad, use_container_width=True)
 
     # --- 4. OTRAS MÉTRICAS CRONOLÓGICAS ---
-    # --- [CORRECCIÓN 3: Reemplazar gráfico de viento] ---
-    st.subheader("Otras Métricas Cronológicas")
+    st.subheader("Otras Métricas Cronológicas (Suavizadas)")
 
     gcol3, gcol4 = st.columns(2)
     with gcol3:
-        # Usamos 'df_datos' (los datos crudos) en lugar de 'df_hourly'
-        fig_radiacion = px.line(df_datos, x='timestamp', y='radiacion_solar',
-                                 title='Evolución de Radiación Solar',
+        # Usamos 'df_smooth' (los datos suavizados)
+        fig_radiacion = px.line(df_smooth, x='timestamp', y='radiacion_solar',
+                                 title='Evolución de Radiación Solar (Suavizada)',
                                  labels={'radiacion_solar': 'Radiación (W/m²)', 'timestamp': 'Fecha y Hora'})
         fig_radiacion.update_traces(line=dict(color='orange'))
         st.plotly_chart(fig_radiacion, use_container_width=True)
 
     with gcol4:
-        # Nuevo gráfico de "Evolución de Velocidad del Viento"
-        fig_viento = px.line(df_datos, x='timestamp', y='velocidad_viento',
-                             title='Evolución de Velocidad del Viento',
+        # Usamos 'df_smooth' (los datos suavizados)
+        fig_viento = px.line(df_smooth, x='timestamp', y='velocidad_viento',
+                             title='Evolución de Velocidad del Viento (Suavizada)',
                              labels={'velocidad_viento': 'Velocidad', 'timestamp': 'Fecha y Hora'})
         fig_viento.update_traces(line=dict(color='blue'))
         st.plotly_chart(fig_viento, use_container_width=True)
