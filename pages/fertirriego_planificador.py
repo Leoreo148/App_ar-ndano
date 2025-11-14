@@ -67,7 +67,7 @@ MAPEO_NOMBRE_A_COLUMNA_DB = {
 def load_recipes_from_excel():
     """
     Lee la hoja 'DOSIS' del Excel para obtener las recetas.
-    Devuelve un diccionario ej: {'Urea': 36.25, 'Nitrato de Calcio': 75.47}
+    Devuelve un diccionario ej: {'Urea': 0.036, 'Nitrato de Calcio': 0.075}
     """
     try:
         df_dosis = pd.read_excel(
@@ -79,42 +79,47 @@ def load_recipes_from_excel():
         # Renombrar por POSICIÓN
         current_cols = df_dosis.columns.tolist()
         
-        if len(current_cols) < 6:
-            st.error("Error: La hoja 'DOSIS' no tiene suficientes columnas. Se esperan al menos 6.")
+        # --- [CORRECCIÓN CRÍTICA 1] ---
+        # Leer la columna correcta: 'gramo / Litro'
+        # Col A (idx 0): FERTILIZANTE
+        # Col B (idx 1): GRUPO
+        # Col C (idx 2): RIQUEZA...
+        # Col D (idx 3): mg/L (ppm)
+        # Col E (idx 4): gramo / Litro  <-- ¡ESTA ES LA QUE QUEREMOS!
+        
+        if len(current_cols) < 5:
+            st.error("Error: La hoja 'DOSIS' no tiene suficientes columnas. Se esperan al menos 5.")
             return None
         
         col_fert_original = current_cols[0]  # Columna A (FERTILIZANTE)
-        col_dosis_original = current_cols[5] # Columna F (mg / Litro (ppm))
+        col_dosis_original = current_cols[4] # Columna E (gramo / Litro)
         
         df_dosis = df_dosis.rename(columns={
             col_fert_original: 'FERTILIZANTE_LIMPIO',
-            col_dosis_original: 'DOSIS_MG_L'
+            col_dosis_original: 'DOSIS_G_L' # Renombrado a Gramos/Litro
         })
+        # --- [FIN CORRECCIÓN 1] ---
         
-        # --- [NUEVA FUNCIÓN DE LIMPIEZA] ---
+        # --- [Función de Limpieza Agresiva] ---
         def clean_string(s):
-            # 1. Si la celda está vacía (NaN, None, etc.), devolverla vacía (pd.NA)
             if pd.isna(s):
                 return pd.NA
-            
-            # 2. Si no está vacía, limpiarla
-            text = str(s).split('(')[0] # Quitar paréntesis
-            text = text.replace(u'\xa0', u' ') # Reemplazar espacio 'no-breaking'
-            text = re.sub(r'\s+', ' ', text) # Reemplazar múltiples espacios por uno solo
-            return text.strip() # Quitar espacios al inicio/final
+            text = str(s).split('(')[0]
+            text = text.replace(u'\xa0', u' ')
+            text = re.sub(r'\s+', ' ', text)
+            return text.strip()
             
         df_dosis['FERTILIZANTE_LIMPIO'] = df_dosis['FERTILIZANTE_LIMPIO'].apply(clean_string)
-        # --- [FIN CORRECCIÓN] ---
+        # --- [FIN LIMPIEZA] ---
 
         # Convertir la columna de dosis a numérico
-        df_dosis['DOSIS_MG_L'] = pd.to_numeric(df_dosis['DOSIS_MG_L'], errors='coerce')
+        df_dosis['DOSIS_G_L'] = pd.to_numeric(df_dosis['DOSIS_G_L'], errors='coerce')
         
         # Filtrar filas que no tengan fertilizante o dosis
-        # Ahora sí eliminará las filas donde FERTILIZANTE_LIMPIO es pd.NA
-        df_dosis = df_dosis.dropna(subset=['FERTILIZANTE_LIMPIO', 'DOSIS_MG_L'])
+        df_dosis = df_dosis.dropna(subset=['FERTILIZANTE_LIMPIO', 'DOSIS_G_L'])
         
         # Convertir a diccionario
-        recipes = pd.Series(df_dosis['DOSIS_MG_L'].values, index=df_dosis['FERTILIZANTE_LIMPIO']).to_dict()
+        recipes = pd.Series(df_dosis['DOSIS_G_L'].values, index=df_dosis['FERTILIZANTE_LIMPIO']).to_dict()
         
         return recipes
         
@@ -162,7 +167,7 @@ if TZ_PERU:
         # --- [HERRAMIENTA DE DEBUG] ---
         if recipes_completas:
             with st.expander("⚠️ DEBUG: Ver Claves de Recetas (desde Hoja 'DOSIS')"):
-                st.write("Ahora debería salir la lista correcta de fertilizantes:")
+                st.write("Copia el nombre EXACTO de esta lista si 'Nitrato de Calcio' sigue fallando:")
                 st.write(list(recipes_completas.keys()))
         # --- [FIN DEBUG] ---
 
@@ -203,7 +208,7 @@ st.info(f"Tarea para hoy ({fecha_actual_peru.strftime('%d/%m/%Y')}): **{st.sessi
 
 
 # --- Mostrar dosis del día (Ahora desde la hoja DOSIS) ---
-with st.expander("Ver dosis DIARIA programada (según Hoja 'DOSIS', mg/L/día)"):
+with st.expander("Ver dosis DIARIA programada (según Hoja 'DOSIS', g/L/día)"):
     
     receta_actual = st.session_state.get('receta_de_hoy', {})
     
@@ -212,7 +217,7 @@ with st.expander("Ver dosis DIARIA programada (según Hoja 'DOSIS', mg/L/día)")
     else:
         # Formatear para st.json
         dosis_info_formateada = {
-            f"{nombre} (mg/L/día)": valor 
+            f"{nombre} (g/L/día)": valor 
             for nombre, valor in receta_actual.items()
         }
         st.json(dosis_info_formateada)
@@ -346,23 +351,22 @@ else:
     else:
         
         # Diccionario para guardar los totales que irán a Supabase
-        # Inicializamos *todas* las columnas en 0.0
         calculos_finales_g = {col: 0.0 for col in MAPEO_NOMBRE_A_COLUMNA_DB.values()}
         
         # Lista para el DataFrame que se mostrará en pantalla
         display_data = []
 
         # Iteramos sobre la RECETA FIJA de hoy
-        for nombre_fertilizante, dosis_mg_l_dia in receta_para_calculo.items():
+        for nombre_fertilizante, dosis_g_l_dia in receta_para_calculo.items():
             
-            # --- CÁLCULO (El que siempre quisimos) ---
-            # 1. (mg/L/día) * días = mg/L totales
-            dosis_total_mg_l = dosis_mg_l_dia * current_dias
-            # 2. (mg/L) * L = mg totales
-            total_mg = dosis_total_mg_l * current_vol_litros
-            # 3. mg / 1000 = g totales
-            total_g = total_mg / 1000.0
-            # --- FIN CÁLCULO ---
+            # --- [CORRECCIÓN CRÍTICA 2] ---
+            # Nueva fórmula de cálculo basada en Gramos/Litro
+            
+            # 1. (g/L/día) * días = g/L totales
+            dosis_total_g_l = dosis_g_l_dia * current_dias
+            # 2. (g/L) * L = g totales
+            total_g = dosis_total_g_l * current_vol_litros
+            # --- FIN CORRECCIÓN 2 ---
             
             # Guardar para Supabase
             nombre_col_db = MAPEO_NOMBRE_A_COLUMNA_DB.get(nombre_fertilizante)
