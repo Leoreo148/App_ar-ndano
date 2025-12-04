@@ -32,7 +32,6 @@ except ImportError:
 
 # ======================================================================
 # SECCIÓN DE CARGA DE DATOS
-# (Esta sección no cambia, es la que ya funcionaba)
 # ======================================================================
 st.title("🌦️ Dashboard de Estación Meteorológica")
 st.write("Sube el archivo de datos (`.xlsx`) de la estación para ingestar y analizar los datos climáticos.")
@@ -53,6 +52,7 @@ if uploaded_file is not None:
         with st.spinner(f"Procesando archivo '{uploaded_file.name}'... Esto puede tardar varios minutos."):
             
             st.info("Detectado archivo .xlsx. Leyendo la primera hoja...")
+            # Leemos con header=1 porque la fila 1 real (indice 0) está vacía o tiene metadata
             df = pd.read_excel(uploaded_file, header=1)
             
             if df is None or df.empty:
@@ -99,14 +99,25 @@ if uploaded_file is not None:
 
             st.write("Procesando timestamp para formato XLSX...")
             
-            df['timestamp_naive'] = df.apply(
-                lambda row: datetime.combine(
-                    row['fecha'].date(),
-                    row['hora']
-                ), 
-                axis=1
-            )
+            # --- [SOLUCIÓN DEL ERROR] ---
+            # En lugar de usar datetime.combine (que falla con strings),
+            # convertimos todo a texto, lo unimos y luego Pandas lo convierte inteligentemente.
             
+            # 1. Aseguramos que sea texto
+            df['fecha_str'] = df['fecha'].astype(str)
+            df['hora_str'] = df['hora'].astype(str)
+
+            # 2. Unimos fecha y hora en una sola columna de texto
+            df['fecha_hora_completa'] = df['fecha_str'] + ' ' + df['hora_str']
+
+            # 3. Convertimos a datetime real (dayfirst=True es vital para formato Perú dd/mm/yy)
+            df['timestamp_naive'] = pd.to_datetime(df['fecha_hora_completa'], dayfirst=True, errors='coerce')
+            
+            # 4. Limpiamos si alguna fecha falló
+            df = df.dropna(subset=['timestamp_naive'])
+            # ----------------------------
+            
+            # Localizamos a hora de Perú
             df['timestamp'] = df['timestamp_naive'].apply(
                 lambda ts_naive: TZ_PERU.localize(ts_naive)
             )
@@ -115,6 +126,7 @@ if uploaded_file is not None:
             columnas_existentes = [col for col in columnas_para_subir if col in df.columns]
             df_final = df[columnas_existentes]
             
+            # Convertir a ISO para Supabase
             df_final['timestamp'] = df_final['timestamp'].apply(lambda x: x.isoformat())
             df_final = df_final.astype(object).where(pd.notnull(df_final), None)
             records_to_insert = df_final.to_dict('records')
@@ -124,6 +136,7 @@ if uploaded_file is not None:
             else:
                 st.write(f"Se procesaron {len(records_to_insert)} registros. Subiendo a Supabase...")
                 
+                # Upsert en bloques (chunks) opcional si son muchos datos, pero directo funciona para <50k
                 response = supabase.table('Datos_Estacion_Clima').upsert(
                     records_to_insert, 
                     on_conflict='timestamp'
@@ -164,15 +177,12 @@ def cargar_datos_climaticos(start_date, end_date):
         if response.data:
             df = pd.DataFrame(response.data)
             
-            # --- [CORRECCIÓN DE ZONA HORARIA] ---
-            # 1. Convertir el texto de Supabase (que está en UTC) a un objeto timestamp
+            # --- [CORRECCIÓN DE ZONA HORARIA AL LEER] ---
             df['timestamp'] = pd.to_datetime(df['timestamp'])
-            
-            # 2. CONVERTIR el timestamp de UTC a la zona horaria de Perú
+            # Convertir UTC (Supabase) a Perú
             df['timestamp'] = df['timestamp'].dt.tz_convert(TZ_PERU)
-            # --- FIN DE LA CORRECCIÓN ---
-
-            # Convertir columnas a numérico (después de cargar)
+            
+            # Convertir columnas a numérico
             cols_to_convert = ['velocidad_viento', 'humedad_out', 'radiacion_solar', 'temperatura_out', 'uv_index', 'lluvia_rate']
             for col in cols_to_convert:
                 if col in df.columns:
@@ -211,7 +221,6 @@ df_datos = cargar_datos_climaticos(start_datetime, end_datetime)
 
 if df_datos.empty:
     st.info("No se encontraron datos para el rango de fechas seleccionado. Sube un archivo o ajusta las fechas.")
-    st.write("*(Recuerda que los datos de prueba son del 4-5 de Nov de 2025)*")
 else:
     st.success(f"Mostrando {len(df_datos)} registros por minuto entre {start_date.strftime('%d/%m')} y {end_date.strftime('%d/%m')}.")
     
@@ -228,7 +237,6 @@ else:
     max_wind = df_datos['velocidad_viento'].max()
     
     if df_datos['temperatura_out'].notna().any():
-        # Ahora .loc buscará la hora local correcta (ej. 12:00 PM)
         hora_max_temp = df_datos.loc[df_datos['temperatura_out'].idxmax()]['timestamp'].strftime('%d/%m a las %H:%M')
     else:
         hora_max_temp = "N/A"
@@ -241,12 +249,11 @@ else:
 
     st.divider()
 
-    # --- 2. GRÁFICOS DE CICLO DIARIO (PROMEDIO POR HORA DEL DÍA) ---
+    # --- 2. GRÁFICOS DE CICLO DIARIO ---
     st.subheader("Promedio de las 24 Horas (Ciclo Diario)")
     st.write("Junta todos los días seleccionados para mostrar el comportamiento promedio a lo largo de un día.")
     
     df_by_hour = df_datos.copy()
-    # Ahora .dt.hour usará la hora local (ej. 12)
     df_by_hour['hora_del_dia'] = df_by_hour['timestamp'].dt.hour
     df_cycle = df_by_hour.groupby('hora_del_dia').mean(numeric_only=True).reset_index()
     df_cycle['Hora (Formato 24h)'] = df_cycle['hora_del_dia'].apply(lambda h: f"{h:02d}:00")
@@ -268,19 +275,18 @@ else:
         
     st.divider()
     
-    # --- 3. GRÁFICOS CRONOLÓGICOS (LÍNEA DE TIEMPO) ---
+    # --- 3. GRÁFICOS CRONOLÓGICOS ---
     st.subheader("Evolución Cronológica (Promedio Móvil)")
-    st.write("Línea de tiempo 'suavizada' de los datos. Muestra todos los días, incluso con vacíos.")
+    st.write("Línea de tiempo 'suavizada' de los datos.")
 
     df_plot = df_datos.set_index('timestamp')
     
-    # Promedio Móvil de 1 Hora
+    # Promedio Móvil de 1 Hora para suavizar picos
     df_smooth = df_plot.rolling(window='1H', min_periods=1).mean(numeric_only=True)
     df_smooth = df_smooth.reset_index() 
 
     gcol1, gcol2 = st.columns(2)
     with gcol1:
-        # Ahora el eje X tendrá la hora local correcta
         fig_temp = px.line(df_smooth, x='timestamp', y='temperatura_out',
                              title='Evolución de Temperatura (Suavizada)',
                              labels={'temperatura_out': 'Temp (°C)', 'timestamp': 'Fecha y Hora'})
@@ -294,7 +300,7 @@ else:
         fig_humedad.update_traces(line=dict(color='green'))
         st.plotly_chart(fig_humedad, use_container_width=True)
 
-    # --- 4. OTRAS MÉTRICAS CRONOLÓGICAS ---
+    # --- 4. OTRAS MÉTRICAS ---
     st.subheader("Otras Métricas Cronológicas (Suavizadas)")
 
     gcol3, gcol4 = st.columns(2)
