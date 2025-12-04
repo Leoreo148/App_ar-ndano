@@ -32,18 +32,14 @@ def procesar_hoja_compleja(df_raw, nombre_hoja):
     """
     data = []
     current_month = "Desconocido"
-    
-    # Convertimos todo a string para buscar patrones, excepto los NaN
-    # Iteramos por las filas buscando encabezados de sección
+    current_week = "S/N"  # Variable para recordar la última semana vista
     
     # Identificar columnas clave (basado en los CSVs subidos)
-    # Buscamos la columna que tenga "Semana" y "Costo Total"
     col_semana_idx = -1
     col_costo_idx = -1
     col_actividad_idx = -1
     
     # Barrido inicial para encontrar índices de columnas probables
-    # Asumimos que la estructura es consistente en las primeras 20 filas
     for r in range(min(20, len(df_raw))):
         row_vals = [str(x).lower() for x in df_raw.iloc[r].values]
         for i, val in enumerate(row_vals):
@@ -54,46 +50,48 @@ def procesar_hoja_compleja(df_raw, nombre_hoja):
             if "actividad" in val or "insumo" in val or "detalle" in val:
                 col_actividad_idx = i
     
-    # Si no encontramos cabeceras claras, usamos índices por defecto basados en tus archivos
+    # Valores por defecto si falla la detección
     if col_semana_idx == -1: col_semana_idx = 0
     if col_actividad_idx == -1: col_actividad_idx = 2
-    # El costo suele estar hacia el final, columna J o K (índice 9 o 10)
     if col_costo_idx == -1: col_costo_idx = 9 
 
     # Iterar filas
     for index, row in df_raw.iterrows():
         # Convertir fila a lista de strings para análisis
         row_str = [str(x) for x in row.values]
-        first_cell = str(row_raw := row.values[0]).strip()
         
         # 1. DETECTAR CAMBIO DE MES
-        # Buscamos "Mes - Septiembre" en cualquier celda de la fila
         found_month = False
         for cell in row_str:
             if "Mes -" in cell:
-                # Extraer nombre del mes (ej: "Septiembre")
                 parts = cell.split("-")
                 if len(parts) > 1:
                     current_month = parts[1].strip()
+                    # Reseteamos la semana al cambiar de mes para evitar confusiones
+                    current_week = "S/N" 
                     found_month = True
                     break
         if found_month:
-            continue # Saltamos la fila del título del mes
+            continue
 
         # 2. SALTAR CABECERAS REPETIDAS
+        # Si la celda contiene la palabra "Semana" (es un encabezado), saltamos
         if "Semana" in str(row.values[col_semana_idx]) or "Rubro" in str(row.values[col_semana_idx]):
             continue
             
         # 3. EXTRAER DATOS
         try:
-            val_semana = row.values[col_semana_idx]
+            val_semana_raw = row.values[col_semana_idx]
             val_costo = row.values[col_costo_idx]
             val_actividad = row.values[col_actividad_idx]
             
-            # Validar que sea una fila de datos (Semana debe ser número, Costo debe existir)
-            # A veces la semana viene como '1', '2' o está vacía en filas consecutivas
+            # --- LÓGICA DE RELLENO DE SEMANA (FILL FORWARD) ---
+            # Si hay un valor en la columna semana, actualizamos current_week
+            if not pd.isna(val_semana_raw) and str(val_semana_raw).strip() != "":
+                current_week = str(val_semana_raw).strip()
+            # Si no hay valor, current_week mantiene el valor de la fila anterior (efecto celda combinada)
             
-            # Limpieza básica de costo
+            # Validar costo
             if pd.isna(val_costo) or str(val_costo).strip() == '' or str(val_costo).lower() == 'nan':
                 continue
                 
@@ -101,12 +99,12 @@ def procesar_hoja_compleja(df_raw, nombre_hoja):
             try:
                 costo_float = float(val_costo)
             except:
-                continue # Si el costo no es número, saltamos (ej: fila de TOTAL)
+                continue 
 
-            # Si llegamos aquí, es un dato válido
+            # Guardamos el dato
             data.append({
                 "Mes": current_month,
-                "Semana": val_semana if not pd.isna(val_semana) else "S/N",
+                "Semana": current_week, # Usamos la variable que "recuerda" el valor
                 "Actividad": str(val_actividad) if not pd.isna(val_actividad) else "Varios",
                 "Costo_USD": costo_float,
                 "Categoria": nombre_hoja
