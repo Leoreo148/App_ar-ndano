@@ -126,7 +126,14 @@ def procesar_indicadores(df):
             break
     
     if header_idx != -1:
-        df.columns = df.iloc[header_idx]
+        # --- CORRECCIÓN DEL ERROR JSON NAN ---
+        # Obtenemos la fila que usaremos como cabecera
+        new_header = df.iloc[header_idx].values
+        # Convertimos forzosamente a string y rellenamos nulos.
+        # Si una celda es NaN (vacía), le ponemos un nombre genérico "Col_X"
+        clean_columns = [str(val).strip() if pd.notna(val) else f"Col_{idx}" for idx, val in enumerate(new_header)]
+        
+        df.columns = clean_columns
         df = df.iloc[header_idx+1:]
     
     # Normalizar columnas
@@ -141,8 +148,9 @@ def procesar_indicadores(df):
     
     df = df.rename(columns=cols_map)
     
-    # Filtrar solo filas con datos numéricos en Mes
-    df = df[pd.to_numeric(df['Mes_Num'], errors='coerce').notna()]
+    # Filtrar solo filas con datos numéricos en Mes (evita filas vacías al final)
+    if 'Mes_Num' in df.columns:
+        df = df[pd.to_numeric(df['Mes_Num'], errors='coerce').notna()]
     
     # Convertir a numeros
     for col in ["Egresos", "Ingresos", "Acumulado", "Neto"]:
@@ -315,21 +323,24 @@ if uploaded_file:
                 fig = go.Figure()
                 
                 # Barras de Ingresos y Egresos
-                fig.add_trace(go.Bar(
-                    x=df_ind['Mes_Num'], y=df_ind['Ingresos'],
-                    name='Ingresos', marker_color='green', opacity=0.6
-                ))
-                fig.add_trace(go.Bar(
-                    x=df_ind['Mes_Num'], y=df_ind['Egresos'] * -1, # Negativo para que salga abajo
-                    name='Egresos', marker_color='red', opacity=0.6
-                ))
+                if "Ingresos" in df_ind.columns:
+                    fig.add_trace(go.Bar(
+                        x=df_ind['Mes_Num'], y=df_ind['Ingresos'],
+                        name='Ingresos', marker_color='green', opacity=0.6
+                    ))
+                if "Egresos" in df_ind.columns:
+                    fig.add_trace(go.Bar(
+                        x=df_ind['Mes_Num'], y=df_ind['Egresos'] * -1, # Negativo para que salga abajo
+                        name='Egresos', marker_color='red', opacity=0.6
+                    ))
                 
                 # Línea de Acumulado
-                fig.add_trace(go.Scatter(
-                    x=df_ind['Mes_Num'], y=df_ind['Acumulado'],
-                    name='Flujo Acumulado', mode='lines+markers',
-                    line=dict(color='blue', width=3)
-                ))
+                if "Acumulado" in df_ind.columns:
+                    fig.add_trace(go.Scatter(
+                        x=df_ind['Mes_Num'], y=df_ind['Acumulado'],
+                        name='Flujo Acumulado', mode='lines+markers',
+                        line=dict(color='blue', width=3)
+                    ))
                 
                 fig.update_layout(title="Ingresos vs Egresos y Saldo Acumulado", barmode='overlay')
                 st.plotly_chart(fig, use_container_width=True)
