@@ -92,7 +92,6 @@ def procesar_hoja_compleja(df_raw, nombre_hoja):
         row_text_start = " ".join(row_str_full[:5]) # Texto de las primeras 5 columnas
 
         # 1. DETECTAR CABECERAS (PRIORIDAD ALTA)
-        # Esto sirve para recalibrar las columnas si el formato cambia
         is_header = False
         for cell in row_str_full[:15]: 
             if "costo total" in cell and "dólar" in cell:
@@ -115,21 +114,17 @@ def procesar_hoja_compleja(df_raw, nombre_hoja):
         if found_month:
             continue
 
-        # 3. FILTRO ANTI-TOTALES (MÁS ESTRICTO)
-        # Si la fila parece ser un total, la saltamos.
-        # Buscamos "total", "suma", "subtotal" en las primeras columnas.
-        # PERO nos aseguramos de no borrar actividades que contengan "total" legítimamente (ej: "Totalizador").
-        # Generalmente los totales están solos en una celda o dicen "Total Semana".
+        # 3. FILTRO ANTI-BASURA (MÁS ESTRICTO AÚN)
         es_total = False
         for cell in row_str_full[:5]:
-            # Limpiamos caracteres raros
             cell_clean = cell.replace(":","").replace(".","").strip()
-            if cell_clean in ["total", "subtotal", "suma", "total semana", "total mes", "gran total"]:
+            # Palabras prohibidas que indican filas de resumen o metadatos
+            if cell_clean in ["total", "subtotal", "suma", "total semana", "total mes", "gran total", 
+                              "densidad de plantas", "nuestra area", "total de macetas", "promedio"]:
                 es_total = True
                 break
-            # Si contiene "total" y es una celda corta (ej: "Total Insumos"), probablemente es basura
+            # Si contiene "total" y es corto, fuera
             if "total" in cell_clean and len(cell_clean) < 20 and "costo" not in cell_clean: 
-                 # Evitamos borrar "Costo Total" si por error llegamos aquí, aunque el paso 1 debió filtrarlo
                  es_total = True
                  break
         
@@ -159,7 +154,6 @@ def procesar_hoja_compleja(df_raw, nombre_hoja):
             costo88_val = 0.0
             try:
                 raw_88 = row_vals[col_costo88_idx]
-                # Limpiar caracteres de moneda si existen
                 if isinstance(raw_88, str):
                     raw_88 = raw_88.replace("$","").replace("S/","").replace(",","").strip()
                 if raw_88 != "":
@@ -177,7 +171,7 @@ def procesar_hoja_compleja(df_raw, nombre_hoja):
 
             # Validaciones Finales
             act_str = str(val_actividad).strip().lower()
-            if act_str in ["nan", "none", "", "total", "subtotal"]:
+            if act_str in ["nan", "none", "", "total", "subtotal", "rubro"]: # 'rubro' a veces se repite en cabeceras
                 continue
             
             # Si no hay costos, saltar
@@ -215,6 +209,8 @@ if uploaded_file:
     sheet_insumos = next((s for s in all_sheets if "insumo" in s.lower()), None)
     sheet_maq = next((s for s in all_sheets if "maquinaria" in s.lower()), None)
     sheet_proy = next((s for s in all_sheets if "proyecc" in s.lower()), None)
+    # NUEVO: Intentar leer la hoja de Costeo General para el resumen
+    sheet_gen = next((s for s in all_sheets if "costeo" in s.lower() and "general" in s.lower()), None)
 
     # --- BARRA LATERAL ---
     st.sidebar.header("⚙️ Configuración")
@@ -242,22 +238,41 @@ if uploaded_file:
 
     # --- PROCESAMIENTO DE DATOS ---
     with st.spinner("Procesando Excel..."):
+        # Procesamos hojas individuales
         df_mo = procesar_hoja_compleja(pd.read_excel(uploaded_file, sheet_name=sheet_mo, header=None), "Mano de Obra") if sheet_mo else pd.DataFrame()
         df_ins = procesar_hoja_compleja(pd.read_excel(uploaded_file, sheet_name=sheet_insumos, header=None), "Insumos") if sheet_insumos else pd.DataFrame()
         df_maq = procesar_hoja_compleja(pd.read_excel(uploaded_file, sheet_name=sheet_maq, header=None), "Maquinaria") if sheet_maq else pd.DataFrame()
         df_proy = procesar_hoja_compleja(pd.read_excel(uploaded_file, sheet_name=sheet_proy, header=None), "Proyecciones") if sheet_proy else pd.DataFrame()
-    
-    # Unimos todo
-    df_operativo = pd.concat([df_mo, df_ins, df_maq])
-    df_todo = pd.concat([df_operativo, df_proy])
+        
+        # Procesamos Costeo General si existe (Para el resumen exacto)
+        if sheet_gen:
+            df_gen_excel = procesar_hoja_compleja(pd.read_excel(uploaded_file, sheet_name=sheet_gen, header=None), "General")
+        else:
+            df_gen_excel = pd.DataFrame()
 
     # --- LÓGICA DE VISUALIZACIÓN ---
     
     if seccion == "Resumen General":
         st.header(f"📊 Resumen General - {tipo_analisis}")
         
-        df_viz = df_todo.copy()
+        # ESTRATEGIA: Si existe la hoja "Costeo General" y seleccionamos meses pasados, USAMOS ESA.
+        # Si no, sumamos las partes como antes.
         
+        usar_hoja_general = not df_gen_excel.empty
+        
+        if usar_hoja_general:
+            df_viz = df_gen_excel.copy()
+            # En la hoja general, la columna "Categoria" es siempre "General", así que recuperamos el rubro de la columna 'Actividad' o 'Rubro' si fuera posible, 
+            # pero procesar_hoja_compleja solo extrae actividad.
+            # Para gráficos de torta, necesitariamos el Rubro real.
+            # Como la hoja general tiene columna 'Rubro' en indice 1, intentaremos recuperarla mejor si queremos detalle.
+            # Pero para el TOTAL, esta hoja es la autoridad.
+        else:
+            # Fallback: Sumar todo + proyecciones
+            df_operativo = pd.concat([df_mo, df_ins, df_maq])
+            df_viz = pd.concat([df_operativo, df_proy])
+        
+        # Filtro Mes
         if mes_seleccionado != "General":
             df_viz = df_viz[df_viz['Mes'] == mes_seleccionado]
 
@@ -270,21 +285,30 @@ if uploaded_file:
             k1, k2, k3 = st.columns(3)
             k1.metric("Costo Total", f"{total:,.2f}")
             
-            grouped_cat = df_viz.groupby('Categoria')[col_uso].sum()
+            # Para el desglose por categoría, si usamos la hoja general plana, no tenemos categorías claras.
+            # Así que para los GRÁFICOS usamos la suma de las hojas detalladas (que sí tienen categoría),
+            # pero ajustamos el mensaje.
+            
+            df_graficos = pd.concat([df_mo, df_ins, df_maq, df_proy])
+            if mes_seleccionado != "General":
+                df_graficos = df_graficos[df_graficos['Mes'] == mes_seleccionado]
+            
+            grouped_cat = df_graficos.groupby('Categoria')[col_uso].sum()
             if not grouped_cat.empty:
-                k2.metric("Mayor Gasto", grouped_cat.idxmax())
-                k3.metric("Monto", f"{grouped_cat.max():,.2f}")
+                k2.metric("Mayor Gasto (Detalle)", grouped_cat.idxmax())
+                k3.metric("Monto (Detalle)", f"{grouped_cat.max():,.2f}")
             
             st.divider()
             
             c1, c2 = st.columns(2)
             with c1:
-                st.subheader("Por Categoría")
-                fig_pie = px.pie(df_viz, values=col_uso, names='Categoria', hole=0.4, 
+                st.subheader("Por Categoría (Basado en Hojas Detalle)")
+                fig_pie = px.pie(df_graficos, values=col_uso, names='Categoria', hole=0.4, 
                                  color_discrete_sequence=px.colors.qualitative.Pastel)
                 st.plotly_chart(fig_pie, use_container_width=True)
             with c2:
                 st.subheader("Evolución Mensual")
+                # Usamos df_viz (la hoja general) para la evolución total si es posible
                 df_mes = df_viz.groupby('Mes')[col_uso].sum().reset_index()
                 # Ordenar
                 df_mes['Sort'] = df_mes['Mes'].apply(lambda x: meses_orden.index(x) if x in meses_orden else 99)
