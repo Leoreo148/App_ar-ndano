@@ -12,11 +12,12 @@ st.title("🌱 Evaluación Fenológica del Arándano")
 st.write("Registre las mediciones de crecimiento y estado para cada planta de la hilera seleccionada.")
 
 # --- Archivo de Configuración ---
+# MODIFICACIÓN 1: Se eliminó la Hilera 3
 HILERAS = {
     'Hilera 1 (21 Emerald)': 21,
-    'Hilera 2 (23 Biloxi/Emerald)': 23,
-    'Hilera 3 (22 Biloxi)': 22
+    'Hilera 2 (23 Biloxi/Emerald)': 23
 }
+
 ETAPAS_FENOLOGICAS = [
     'Yema Hinchada', 'Punta Verde', 'Salida de Hojas', 
     'Hojas Extendidas', 'Inicio de Floración', 'Plena Flor', 
@@ -37,7 +38,6 @@ def init_supabase_connection():
         st.error(f"Error al conectar con Supabase: {e}")
         return None
 
-# ¡Esta línea faltaba y es crucial!
 supabase = init_supabase_connection()
 
 # --- Funciones de Datos ---
@@ -45,15 +45,12 @@ supabase = init_supabase_connection()
 def cargar_y_calcular_crecimiento():
     """
     Carga el historial de Supabase y calcula la Tasa de Crecimiento Diario (TCD).
-    (Esta era la función que se había mezclado con la de conexión)
     """
     if not supabase:
         st.error("Error al cargar datos: No hay conexión con Supabase.")
         return pd.DataFrame()
     
     try:
-        # --- CORRECCIÓN AQUÍ ---
-        # Cambiar 'ascending=True' por 'desc=False'
         response = supabase.table('Fenologia_Arandano').select("*").order('Fecha', desc=False).execute()
         df = pd.DataFrame(response.data)
         
@@ -97,6 +94,7 @@ def cargar_y_calcular_crecimiento():
 
 with st.expander("➕ Registrar Nueva Evaluación por Planta", expanded=True):
     
+    # Manejo del estado de la hilera seleccionada
     if 'hilera_para_registrar' not in st.session_state:
         st.session_state.hilera_para_registrar = list(HILERAS.keys())[0]
 
@@ -104,65 +102,78 @@ with st.expander("➕ Registrar Nueva Evaluación por Planta", expanded=True):
         st.session_state.hilera_para_registrar = st.session_state.widget_selectbox_hilera
 
     st.subheader("1. Datos Generales de la Jornada")
-    col1, col2 = st.columns(2)
+    
+    # MODIFICACIÓN 2: Etapa Fenológica ahora es un dato general (3 columnas)
+    col1, col2, col3 = st.columns(3)
+    
     with col1:
         st.selectbox(
-            'Seleccione la Hilera a Evaluar:', 
+            'Seleccione la Hilera:', 
             options=list(HILERAS.keys()),
             key='widget_selectbox_hilera',
             on_change=on_hilera_change
         )
     with col2:
         fecha_evaluacion = st.date_input("Fecha de Evaluación", datetime.now())
+    with col3:
+        # Aquí seleccionamos la etapa para TODAS las plantas de esta evaluación
+        etapa_general = st.selectbox("Etapa Fenológica General", ETAPAS_FENOLOGICAS)
     
     hilera_actual = st.session_state.hilera_para_registrar
     num_plantas = HILERAS[hilera_actual]
     
+    st.divider()
+    
     with st.form("nueva_evaluacion_form"):
-        st.subheader(f"2. Ingrese los datos para las {num_plantas} plantas de la '{hilera_actual}'")
+        st.subheader(f"2. Mediciones para las {num_plantas} plantas de '{hilera_actual}'")
+        st.info(f"Todas las plantas se registrarán con la etapa: **{etapa_general}**")
 
         key_prefix = hilera_actual.replace(" ", "_").replace("/", "_").replace("(", "").replace(")", "")
 
         datos_plantas = []
         for i in range(num_plantas):
-            st.markdown(f"--- \n **Planta {i+1}**")
-            cols_planta = st.columns(5)
+            st.markdown(f"**Planta {i+1}**")
+            
+            # MODIFICACIÓN 3: Solo 4 columnas numéricas (se quitó el selectbox de etapa)
+            cols_planta = st.columns(4)
             with cols_planta[0]:
-                etapa = st.selectbox("Etapa Fenológica", ETAPAS_FENOLOGICAS, key=f"{key_prefix}_etapa_{i}")
-            with cols_planta[1]:
                 altura = st.number_input("Altura (cm)", min_value=0.0, format="%.2f", key=f"{key_prefix}_altura_{i}")
-            with cols_planta[2]:
+            with cols_planta[1]:
                 brotes = st.number_input("N° Brotes", min_value=0, step=1, key=f"{key_prefix}_brotes_{i}")
-            with cols_planta[3]:
+            with cols_planta[2]:
                 yemas = st.number_input("N° Yemas", min_value=0, step=1, key=f"{key_prefix}_yemas_{i}")
-            with cols_planta[4]:
+            with cols_planta[3]:
                 diametro = st.number_input("Diámetro Tallo (mm)", min_value=0.0, format="%.2f", key=f"{key_prefix}_diametro_{i}")
             
             datos_plantas.append({
                 'Fecha': fecha_evaluacion.strftime("%Y-%m-%d"),
                 'Hilera': hilera_actual,
                 'Numero_de_Planta': i + 1,
-                'Etapa_Fenologica': etapa,
+                'Etapa_Fenologica': etapa_general, # Usamos la variable general seleccionada arriba
                 'Altura_Planta_cm': altura,
                 'Numero_Brotes': brotes,
                 'Numero_Yemas': yemas,
                 'diametro_tallo_mm': diametro,
             })
+            st.divider() # Línea separadora entre plantas
 
-        submitted = st.form_submit_button("✅ Guardar Evaluación Completa")
+        submitted = st.form_submit_button("✅ Guardar Evaluación Completa", type="primary")
+        
         if submitted:
             if supabase:
                 try:
+                    # Filtramos registros vacíos para no llenar la BD de ceros si no se midió
                     registros_validos = [
                         reg for reg in datos_plantas 
-                        if reg['Altura_Planta_cm'] > 0 or reg['Numero_Brotes'] > 0 or reg['Numero_Yemas'] > 0
+                        if reg['Altura_Planta_cm'] > 0 or reg['Numero_Brotes'] > 0 or reg['Numero_Yemas'] > 0 or reg['diametro_tallo_mm'] > 0
                     ]
+                    
                     if registros_validos:
                         response = supabase.table('Fenologia_Arandano').insert(registros_validos).execute()
-                        st.toast(f"✅ ¡Evaluación de {len(registros_validos)} plantas guardada exitosamente!", icon="🎉")
+                        st.toast(f"✅ ¡Se guardaron {len(registros_validos)} plantas exitosamente!", icon="🎉")
                         st.cache_data.clear() # Limpiar la caché para recargar los datos
                     else:
-                        st.warning("No se ingresaron datos en ninguna planta.")
+                        st.warning("⚠️ No se ingresaron datos numéricos (alturas, brotes, etc) en ninguna planta.")
                 except Exception as e:
                     st.error(f"Error al guardar en Supabase: {e}")
             else:
@@ -204,7 +215,7 @@ else:
     st.divider()
     st.subheader("📈 Análisis de Crecimiento a lo Largo del Tiempo")
     
-    # Gráfico 1: Evolución de Altura (el que ya tenías)
+    # Gráfico 1: Evolución de Altura
     df_tendencia_altura = df_historial.groupby(['Fecha', 'Hilera'])['Altura_Planta_cm'].mean().reset_index()
     if not df_tendencia_altura.empty:
         fig_altura = px.line(df_tendencia_altura, x='Fecha', y='Altura_Planta_cm', color='Hilera',
@@ -212,10 +223,8 @@ else:
                              labels={'Fecha': 'Fecha de Medición', 'Altura_Planta_cm': 'Altura Promedio (cm)', 'Hilera': 'Hilera'})
         st.plotly_chart(fig_altura, use_container_width=True)
     
-    # --- NUEVO GRÁFICO: Tasa de Crecimiento Diario ---
-    # Calcular el promedio de la tasa de crecimiento por día por hilera
+    # Gráfico 2: Tasa de Crecimiento Diario
     df_tasa_crecimiento = df_historial.groupby(['Fecha', 'Hilera'])['Tasa_Crecimiento_cm_dia'].mean().reset_index()
-    # Filtrar ceros (días sin crecimiento o primera medición)
     df_tasa_crecimiento = df_tasa_crecimiento[df_tasa_crecimiento['Tasa_Crecimiento_cm_dia'] > 0]
     
     if not df_tasa_crecimiento.empty:
