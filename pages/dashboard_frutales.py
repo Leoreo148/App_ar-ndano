@@ -27,76 +27,93 @@ st.markdown("""
 # --- FUNCIÓN INTELIGENTE PARA DETECTAR COLUMNAS ---
 def detectar_indices_columnas(fila_valores):
     """
-    Escanea una fila (cabecera) para encontrar en qué posición están los datos
-    de Costo 88m2 y Costo Hectárea.
+    Escanea una fila para encontrar las columnas de datos.
+    Limita la búsqueda a las primeras 15 columnas para evitar leer
+    las tablas de resumen que a veces están a la derecha.
     """
     idx_88 = -1
     idx_ha = -1
     idx_actividad = -1
     idx_semana = -1
     
+    # Convertimos a string y normalizamos
     fila_str = [str(x).lower().strip() for x in fila_valores]
     
-    for i, val in enumerate(fila_str):
+    # Limitamos el rango de búsqueda (importante para no leer la tabla resumen de la derecha)
+    limite_busqueda = min(len(fila_str), 15) 
+    
+    for i in range(limite_busqueda):
+        val = fila_str[i]
+        
         # Buscar Semana
-        if "semana" in val and "lunes" in val:
+        if "semana" in val and ("lunes" in val or "viernes" in val):
             idx_semana = i
         
         # Buscar Actividad
         if ("actividad" in val or "insumo" in val or "detalle" in val) and idx_actividad == -1:
             idx_actividad = i
             
-        # Buscar Costos (La parte difícil)
-        # Costo Ha suele tener "ha" y "total" y "dólares"
-        if "total" in val and "ha" in val and ("dólar" in val or "dolar" in val):
+        # Buscar Costos
+        # Prioridad: Costo Ha tiene "ha" y "total"
+        if "total" in val and "ha" in val and ("dólar" in val or "dolar" in val or "usd" in val):
             idx_ha = i
-        # Costo 88m2 suele ser "costo total (dólares)" sin la palabra Ha (o a veces está antes)
-        elif "total" in val and ("dólar" in val or "dolar" in val) and "ha" not in val:
+        # Costo 88m2 suele ser "costo total (dólares)" sin la palabra Ha
+        elif "total" in val and ("dólar" in val or "dolar" in val or "usd" in val) and "ha" not in val:
             idx_88 = i
             
-    # Fallback (Si no encuentra, usa posiciones comunes del Excel que subiste)
+    # Fallback si falla la detección (usamos los índices más comunes de tu archivo)
     if idx_semana == -1: idx_semana = 0
     if idx_actividad == -1: idx_actividad = 2
-    if idx_ha == -1: idx_ha = 10 # Suele estar al final
-    if idx_88 == -1: idx_88 = 9  # Suele estar antes de Ha
+    if idx_ha == -1: idx_ha = 10 
+    if idx_88 == -1: idx_88 = 9
     
     return idx_semana, idx_actividad, idx_88, idx_ha
 
 # --- FUNCIÓN DE LIMPIEZA MAESTRA ---
 def procesar_hoja_compleja(df_raw, nombre_hoja):
     data = []
-    current_month = "General" # Valor por defecto
-    current_week = "S/N"
+    current_month = "General" 
+    current_week = "Semana 1" # Valor inicial por defecto
     
-    # Índices iniciales
+    # Índices iniciales por defecto
     col_semana_idx = 0
     col_actividad_idx = 2
     col_costo88_idx = 9
     col_costoha_idx = 10
     
+    # Lista de meses para detección robusta
+    nombres_meses = ["enero", "febrero", "marzo", "abril", "mayo", "junio", 
+                     "julio", "agosto", "septiembre", "setiembre", "octubre", "noviembre", "diciembre"]
+
     # Iterar filas
     for index, row in df_raw.iterrows():
-        row_str = [str(x) for x in row.values]
         row_vals = row.values
+        row_str_full = [str(x).lower().strip() for x in row_vals]
         
-        # 1. DETECTAR CAMBIO DE MES
+        # 1. DETECTAR CAMBIO DE MES (Más agresivo)
+        # Buscamos si alguna celda contiene "mes -" y un nombre de mes
         found_month = False
-        for cell in row_str:
-            if "Mes -" in cell:
-                parts = cell.split("-")
-                if len(parts) > 1:
-                    current_month = parts[1].strip()
-                    current_week = "S/N" # Resetear semana al cambiar mes
+        row_text = " ".join(row_str_full[:5]) # Miramos solo al inicio de la fila
+        
+        if "mes" in row_text and "-" in row_text:
+            for mes in nombres_meses:
+                if mes in row_text:
+                    # Encontramos un mes nuevo
+                    # Formateamos bonito (primera letra mayuscula)
+                    current_month = mes.capitalize()
+                    if current_month == "Setiembre": current_month = "Septiembre" # Normalizar
+                    
+                    current_week = "S/N" # Reseteamos la semana
                     found_month = True
                     break
+        
         if found_month:
             continue
 
-        # 2. DETECTAR CABECERAS (Para recalibrar índices si cambian en proyecciones)
-        # Si la fila tiene "Costo Total", re-detectamos columnas
+        # 2. DETECTAR CABECERAS (Recalibrar columnas si cambia el formato)
         is_header = False
-        for cell in row_str:
-            if "Costo Total" in cell:
+        for cell in row_str_full[:15]: # Miramos primeras 15 cols
+            if "costo total" in cell and "dólar" in cell:
                 col_semana_idx, col_actividad_idx, col_costo88_idx, col_costoha_idx = detectar_indices_columnas(row_vals)
                 is_header = True
                 break
@@ -109,40 +126,55 @@ def procesar_hoja_compleja(df_raw, nombre_hoja):
             val_actividad = row_vals[col_actividad_idx]
             
             # --- LÓGICA FILL FORWARD SEMANA ---
-            if not pd.isna(val_semana_raw) and str(val_semana_raw).strip() not in ["", "nan", "None"]:
-                current_week = str(val_semana_raw).strip()
+            # Si hay un número o texto en la columna semana, actualizamos
+            if not pd.isna(val_semana_raw):
+                s_str = str(val_semana_raw).strip()
+                if s_str not in ["", "nan", "None"]:
+                    # Si es solo un número "1", le agregamos "Semana "
+                    if s_str.isdigit():
+                        current_week = f"Semana {s_str}"
+                    elif "sem" not in s_str.lower():
+                        current_week = f"Semana {s_str}"
+                    else:
+                        current_week = s_str
             
+            # Si current_week sigue siendo S/N (ej. primera fila del mes vacía), asumimos Semana 1
+            if current_week == "S/N":
+                current_week = "Semana 1"
+
             # --- EXTRAER COSTOS ---
-            # Costo 88m2
             costo88_val = 0.0
             try:
                 raw_88 = row_vals[col_costo88_idx]
-                if not pd.isna(raw_88):
+                if isinstance(raw_88, (int, float)):
                     costo88_val = float(raw_88)
-            except:
-                costo88_val = 0.0
+            except: pass
                 
-            # Costo Ha
             costoha_val = 0.0
             try:
                 raw_ha = row_vals[col_costoha_idx]
-                if not pd.isna(raw_ha):
+                if isinstance(raw_ha, (int, float)):
                     costoha_val = float(raw_ha)
-            except:
-                costoha_val = 0.0
+            except: pass
 
-            # Validar que sea una fila de datos (tiene que haber algún costo o actividad)
-            if costo88_val == 0 and costoha_val == 0 and (pd.isna(val_actividad) or str(val_actividad)=='nan'):
+            # Validar que sea fila de datos real
+            # Si actividad está vacía o es "Total", saltar
+            act_str = str(val_actividad).strip().lower()
+            if act_str in ["nan", "none", "", "total"]:
                 continue
             
-            # Si es una fila de "TOTAL", la saltamos para no duplicar suma
-            if str(val_actividad).lower() == "total" or "total" in str(row_vals[0]).lower():
+            # Si columna 0 dice Total, saltar
+            if "total" in str(row_vals[0]).lower():
+                continue
+            
+            # Si no hay costos, saltar (salvo que sea un registro informativo, pero para costos no suma)
+            if costo88_val == 0 and costoha_val == 0:
                 continue
 
             data.append({
                 "Mes": current_month,
                 "Semana": current_week,
-                "Actividad": str(val_actividad) if not pd.isna(val_actividad) else "Varios",
+                "Actividad": str(val_actividad),
                 "Costo_88m2": costo88_val,
                 "Costo_Ha": costoha_val,
                 "Categoria": nombre_hoja
@@ -174,13 +206,12 @@ if uploaded_file:
     # --- BARRA LATERAL ---
     st.sidebar.header("⚙️ Configuración")
     
-    # 1. SELECTOR DE UNIDAD (LO QUE PIDIERON TUS AMIGOS)
+    # 1. SELECTOR DE UNIDAD
     tipo_analisis = st.sidebar.radio(
         "📐 Unidad de Análisis:",
         ["Proyecto Actual (88 m²)", "Proyección Hectárea (1 Ha)"],
         index=0
     )
-    # Definimos qué columna usar según la elección
     col_uso = "Costo_88m2" if "88" in tipo_analisis else "Costo_Ha"
     
     st.sidebar.divider()
@@ -197,60 +228,53 @@ if uploaded_file:
     mes_seleccionado = st.sidebar.selectbox("📅 Mes:", meses_orden)
 
     # --- PROCESAMIENTO DE DATOS ---
-    # Cargamos todo en un solo DF gigante para el Resumen, o por partes para secciones
-    df_mo = procesar_hoja_compleja(pd.read_excel(uploaded_file, sheet_name=sheet_mo, header=None), "Mano de Obra") if sheet_mo else pd.DataFrame()
-    df_ins = procesar_hoja_compleja(pd.read_excel(uploaded_file, sheet_name=sheet_insumos, header=None), "Insumos") if sheet_insumos else pd.DataFrame()
-    df_maq = procesar_hoja_compleja(pd.read_excel(uploaded_file, sheet_name=sheet_maq, header=None), "Maquinaria") if sheet_maq else pd.DataFrame()
-    df_proy = procesar_hoja_compleja(pd.read_excel(uploaded_file, sheet_name=sheet_proy, header=None), "Proyecciones") if sheet_proy else pd.DataFrame()
+    with st.spinner("Procesando Excel..."):
+        df_mo = procesar_hoja_compleja(pd.read_excel(uploaded_file, sheet_name=sheet_mo, header=None), "Mano de Obra") if sheet_mo else pd.DataFrame()
+        df_ins = procesar_hoja_compleja(pd.read_excel(uploaded_file, sheet_name=sheet_insumos, header=None), "Insumos") if sheet_insumos else pd.DataFrame()
+        df_maq = procesar_hoja_compleja(pd.read_excel(uploaded_file, sheet_name=sheet_maq, header=None), "Maquinaria") if sheet_maq else pd.DataFrame()
+        df_proy = procesar_hoja_compleja(pd.read_excel(uploaded_file, sheet_name=sheet_proy, header=None), "Proyecciones") if sheet_proy else pd.DataFrame()
     
-    # Unimos las categorías operativas (sin proyecciones futuras, a menos que se seleccione proyecciones)
+    # Unimos todo
     df_operativo = pd.concat([df_mo, df_ins, df_maq])
+    df_todo = pd.concat([df_operativo, df_proy])
 
     # --- LÓGICA DE VISUALIZACIÓN ---
     
     if seccion == "Resumen General":
         st.header(f"📊 Resumen General - {tipo_analisis}")
         
-        # Usamos df_operativo + df_proy si el usuario quiere ver todo, o solo operativo
-        # Para resumen general, solemos mostrar lo ejecutado (MO, Insumos, Maq)
-        # Pero si seleccionan meses futuros (Dic/Ene/Feb) que están en proyección, hay que incluirlo.
+        # Si selecciona meses futuros (Dic-Feb), usamos df_todo (incluye proyecciones)
+        # Si selecciona pasado (Sep-Nov), usamos operativo
+        # Para simplificar, usamos df_todo y filtramos
+        df_viz = df_todo.copy()
         
-        df_viz = pd.concat([df_operativo, df_proy])
-        
-        # Filtro Mes
         if mes_seleccionado != "General":
             df_viz = df_viz[df_viz['Mes'] == mes_seleccionado]
 
         if df_viz.empty or df_viz[col_uso].sum() == 0:
-            st.warning(f"⚠️ No hay datos de costos para el mes **{mes_seleccionado}** en la unidad seleccionada.")
+            st.warning(f"⚠️ No hay datos de costos para el mes **{mes_seleccionado}**.")
         else:
-            # KPIs
             total = df_viz[col_uso].sum()
-            # Evitar error idxmax si no hay grupos
-            cat_mayor = "N/A"
-            grouped_cat = df_viz.groupby('Categoria')[col_uso].sum()
-            if not grouped_cat.empty:
-                cat_mayor = grouped_cat.idxmax()
-                
+            
+            # KPI Cards
             k1, k2, k3 = st.columns(3)
             k1.metric("Costo Total", f"{total:,.2f}")
-            k2.metric("Rubro Mayor Gasto", cat_mayor)
-            k3.metric("Registros Analizados", len(df_viz))
+            
+            grouped_cat = df_viz.groupby('Categoria')[col_uso].sum()
+            if not grouped_cat.empty:
+                k2.metric("Mayor Gasto", grouped_cat.idxmax())
+                k3.metric("Monto", f"{grouped_cat.max():,.2f}")
             
             st.divider()
             
-            # Gráficos
             c1, c2 = st.columns(2)
-            
             with c1:
-                st.subheader("Gasto por Categoría")
+                st.subheader("Por Categoría")
                 fig_pie = px.pie(df_viz, values=col_uso, names='Categoria', hole=0.4, 
                                  color_discrete_sequence=px.colors.qualitative.Pastel)
                 st.plotly_chart(fig_pie, use_container_width=True)
-                
             with c2:
-                st.subheader("Gasto por Mes (Total)")
-                # Agrupar por mes ordenado
+                st.subheader("Evolución Mensual")
                 df_mes = df_viz.groupby('Mes')[col_uso].sum().reset_index()
                 # Ordenar
                 df_mes['Sort'] = df_mes['Mes'].apply(lambda x: meses_orden.index(x) if x in meses_orden else 99)
@@ -260,53 +284,51 @@ if uploaded_file:
                 st.plotly_chart(fig_bar, use_container_width=True)
 
     elif seccion in ["Mano de Obra", "Insumos", "Maquinaria", "Proyecciones"]:
-        # Seleccionar DF correcto
         if seccion == "Mano de Obra": df_active = df_mo
         elif seccion == "Insumos": df_active = df_ins
         elif seccion == "Maquinaria": df_active = df_maq
         elif seccion == "Proyecciones": df_active = df_proy
         
         st.header(f"Análisis: {seccion}")
-        st.info(f"Viendo datos en base a: **{tipo_analisis}**")
+        st.caption(f"Unidad: {tipo_analisis}")
         
-        # Filtro Mes
         if mes_seleccionado != "General":
             df_active = df_active[df_active['Mes'] == mes_seleccionado]
             
         if df_active.empty or df_active[col_uso].sum() == 0:
-            st.warning("No se encontraron costos para esta selección.")
+            st.warning("No hay datos para mostrar.")
         else:
             total_sec = df_active[col_uso].sum()
-            st.metric(f"Total {seccion} ({mes_seleccionado})", f"{total_sec:,.2f}")
+            st.metric(f"Total {seccion}", f"{total_sec:,.2f}")
             
-            tab1, tab2 = st.tabs(["📈 Tendencias Semanales", "📋 Detalle"])
+            tab1, tab2 = st.tabs(["📈 Gráficos", "📋 Tabla Detallada"])
             
             with tab1:
                 c1, c2 = st.columns(2)
-                # Por Semana
-                df_active['Semana_Label'] = df_active['Mes'] + " - Sem " + df_active['Semana'].astype(str)
-                # Ordenar
-                df_active['Sort'] = df_active['Mes'].apply(lambda x: meses_orden.index(x) if x in meses_orden else 99)
-                df_active = df_active.sort_values(['Sort', 'Semana'])
+                # Gráfico Semanal
+                # Limpieza de etiqueta semana
+                df_active['Semana_Clean'] = df_active['Semana'].apply(lambda x: str(x).replace('.0',''))
+                df_active['Mes_Semana'] = df_active['Mes'] + " - " + df_active['Semana_Clean']
                 
-                df_sem = df_active.groupby('Semana_Label')[col_uso].sum().reset_index()
+                # Ordenar cronológicamente
+                df_active['Mes_Index'] = df_active['Mes'].apply(lambda x: meses_orden.index(x) if x in meses_orden else 99)
+                df_active = df_active.sort_values(['Mes_Index', 'Semana_Clean'])
                 
-                fig_sem = px.bar(df_sem, x='Semana_Label', y=col_uso, title="Costo por Semana",
-                                 color_discrete_sequence=['#3498db'])
+                df_sem = df_active.groupby('Mes_Semana', sort=False)[col_uso].sum().reset_index()
+                
+                fig_sem = px.bar(df_sem, x='Mes_Semana', y=col_uso, title="Costo por Semana",
+                                 text_auto='.2s', color_discrete_sequence=['#3498db'])
                 c1.plotly_chart(fig_sem, use_container_width=True)
                 
-                # Top Actividades
-                df_top = df_active.groupby('Actividad')[col_uso].sum().reset_index().sort_values(col_uso, ascending=False).head(8)
-                fig_top = px.bar(df_top, y='Actividad', x=col_uso, orientation='h', title="Top Actividades más Caras",
+                # Top Items
+                df_top = df_active.groupby('Actividad')[col_uso].sum().reset_index().sort_values(col_uso, ascending=False).head(10)
+                fig_top = px.bar(df_top, y='Actividad', x=col_uso, orientation='h', title="Top 10 Actividades/Insumos",
                                  color_discrete_sequence=['#e74c3c'])
                 fig_top.update_layout(yaxis={'categoryorder':'total ascending'})
                 c2.plotly_chart(fig_top, use_container_width=True)
                 
             with tab2:
-                # Tabla limpia
-                df_show = df_active[['Mes', 'Semana', 'Actividad', col_uso]].copy()
-                df_show.columns = ['Mes', 'Semana', 'Actividad', 'Costo']
-                st.dataframe(df_show, use_container_width=True)
+                st.dataframe(df_active[['Mes', 'Semana', 'Actividad', col_uso]], use_container_width=True)
 
 else:
-    st.info("Esperando archivo... Sube 'FRUTALES COSTOS (1).xlsx' en la barra lateral.")
+    st.info("Esperando archivo...")
