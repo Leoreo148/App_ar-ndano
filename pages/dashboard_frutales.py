@@ -89,38 +89,10 @@ def procesar_hoja_compleja(df_raw, nombre_hoja):
     for index, row in df_raw.iterrows():
         row_vals = row.values
         row_str_full = [str(x).lower().strip() for x in row_vals]
-        
-        # --- 0. FILTRO ANTI-TOTALES (LA SOLUCIÓN CLAVE) ---
-        # Si cualquier celda de las primeras 5 columnas dice "TOTAL", saltamos la fila.
-        # Esto evita sumar los totales que ya vienen calculados en el Excel.
-        es_total = False
-        for cell in row_str_full[:5]:
-            if "total" in cell or "subtotal" in cell or "suma" in cell:
-                # Excepción: Si es un título de columna que dice "Costo Total", no lo marcamos aquí (lo maneja el detector de cabecera)
-                # Pero si es una fila de datos que dice "TOTAL", sí.
-                # Verificamos si parece ser una fila de datos (sin cabeceras complejas)
-                if cell == "total": 
-                    es_total = True
-                    break
-        if es_total:
-            continue
+        row_text_start = " ".join(row_str_full[:5]) # Texto de las primeras 5 columnas
 
-        # 1. DETECTAR CAMBIO DE MES
-        found_month = False
-        row_text = " ".join(row_str_full[:5]) # Miramos solo al inicio de la fila
-        
-        if "mes" in row_text and "-" in row_text:
-            for mes in nombres_meses:
-                if mes in row_text:
-                    current_month = mes.capitalize()
-                    if current_month == "Setiembre": current_month = "Septiembre"
-                    current_week = "S/N" 
-                    found_month = True
-                    break
-        if found_month:
-            continue
-
-        # 2. DETECTAR CABECERAS
+        # 1. DETECTAR CABECERAS (PRIORIDAD ALTA)
+        # Esto sirve para recalibrar las columnas si el formato cambia
         is_header = False
         for cell in row_str_full[:15]: 
             if "costo total" in cell and "dólar" in cell:
@@ -130,7 +102,41 @@ def procesar_hoja_compleja(df_raw, nombre_hoja):
         if is_header:
             continue
 
-        # 3. EXTRAER DATOS
+        # 2. DETECTAR CAMBIO DE MES
+        found_month = False
+        if "mes" in row_text_start and "-" in row_text_start:
+            for mes in nombres_meses:
+                if mes in row_text_start:
+                    current_month = mes.capitalize()
+                    if current_month == "Setiembre": current_month = "Septiembre"
+                    current_week = "S/N" 
+                    found_month = True
+                    break
+        if found_month:
+            continue
+
+        # 3. FILTRO ANTI-TOTALES (MÁS ESTRICTO)
+        # Si la fila parece ser un total, la saltamos.
+        # Buscamos "total", "suma", "subtotal" en las primeras columnas.
+        # PERO nos aseguramos de no borrar actividades que contengan "total" legítimamente (ej: "Totalizador").
+        # Generalmente los totales están solos en una celda o dicen "Total Semana".
+        es_total = False
+        for cell in row_str_full[:5]:
+            # Limpiamos caracteres raros
+            cell_clean = cell.replace(":","").replace(".","").strip()
+            if cell_clean in ["total", "subtotal", "suma", "total semana", "total mes", "gran total"]:
+                es_total = True
+                break
+            # Si contiene "total" y es una celda corta (ej: "Total Insumos"), probablemente es basura
+            if "total" in cell_clean and len(cell_clean) < 20 and "costo" not in cell_clean: 
+                 # Evitamos borrar "Costo Total" si por error llegamos aquí, aunque el paso 1 debió filtrarlo
+                 es_total = True
+                 break
+        
+        if es_total:
+            continue
+
+        # 4. EXTRAER DATOS
         try:
             val_semana_raw = row_vals[col_semana_idx]
             val_actividad = row_vals[col_actividad_idx]
@@ -153,14 +159,19 @@ def procesar_hoja_compleja(df_raw, nombre_hoja):
             costo88_val = 0.0
             try:
                 raw_88 = row_vals[col_costo88_idx]
-                if isinstance(raw_88, (int, float)):
+                # Limpiar caracteres de moneda si existen
+                if isinstance(raw_88, str):
+                    raw_88 = raw_88.replace("$","").replace("S/","").replace(",","").strip()
+                if raw_88 != "":
                     costo88_val = float(raw_88)
             except: pass
                 
             costoha_val = 0.0
             try:
                 raw_ha = row_vals[col_costoha_idx]
-                if isinstance(raw_ha, (int, float)):
+                if isinstance(raw_ha, str):
+                    raw_ha = raw_ha.replace("$","").replace("S/","").replace(",","").strip()
+                if raw_ha != "":
                     costoha_val = float(raw_ha)
             except: pass
 
