@@ -90,29 +90,39 @@ def procesar_hoja_compleja(df_raw, nombre_hoja):
         row_vals = row.values
         row_str_full = [str(x).lower().strip() for x in row_vals]
         
-        # 1. DETECTAR CAMBIO DE MES (Más agresivo)
-        # Buscamos si alguna celda contiene "mes -" y un nombre de mes
+        # --- 0. FILTRO ANTI-TOTALES (LA SOLUCIÓN CLAVE) ---
+        # Si cualquier celda de las primeras 5 columnas dice "TOTAL", saltamos la fila.
+        # Esto evita sumar los totales que ya vienen calculados en el Excel.
+        es_total = False
+        for cell in row_str_full[:5]:
+            if "total" in cell or "subtotal" in cell or "suma" in cell:
+                # Excepción: Si es un título de columna que dice "Costo Total", no lo marcamos aquí (lo maneja el detector de cabecera)
+                # Pero si es una fila de datos que dice "TOTAL", sí.
+                # Verificamos si parece ser una fila de datos (sin cabeceras complejas)
+                if cell == "total": 
+                    es_total = True
+                    break
+        if es_total:
+            continue
+
+        # 1. DETECTAR CAMBIO DE MES
         found_month = False
         row_text = " ".join(row_str_full[:5]) # Miramos solo al inicio de la fila
         
         if "mes" in row_text and "-" in row_text:
             for mes in nombres_meses:
                 if mes in row_text:
-                    # Encontramos un mes nuevo
-                    # Formateamos bonito (primera letra mayuscula)
                     current_month = mes.capitalize()
-                    if current_month == "Setiembre": current_month = "Septiembre" # Normalizar
-                    
-                    current_week = "S/N" # Reseteamos la semana
+                    if current_month == "Setiembre": current_month = "Septiembre"
+                    current_week = "S/N" 
                     found_month = True
                     break
-        
         if found_month:
             continue
 
-        # 2. DETECTAR CABECERAS (Recalibrar columnas si cambia el formato)
+        # 2. DETECTAR CABECERAS
         is_header = False
-        for cell in row_str_full[:15]: # Miramos primeras 15 cols
+        for cell in row_str_full[:15]: 
             if "costo total" in cell and "dólar" in cell:
                 col_semana_idx, col_actividad_idx, col_costo88_idx, col_costoha_idx = detectar_indices_columnas(row_vals)
                 is_header = True
@@ -126,11 +136,9 @@ def procesar_hoja_compleja(df_raw, nombre_hoja):
             val_actividad = row_vals[col_actividad_idx]
             
             # --- LÓGICA FILL FORWARD SEMANA ---
-            # Si hay un número o texto en la columna semana, actualizamos
             if not pd.isna(val_semana_raw):
                 s_str = str(val_semana_raw).strip()
                 if s_str not in ["", "nan", "None"]:
-                    # Si es solo un número "1", le agregamos "Semana "
                     if s_str.isdigit():
                         current_week = f"Semana {s_str}"
                     elif "sem" not in s_str.lower():
@@ -138,7 +146,6 @@ def procesar_hoja_compleja(df_raw, nombre_hoja):
                     else:
                         current_week = s_str
             
-            # Si current_week sigue siendo S/N (ej. primera fila del mes vacía), asumimos Semana 1
             if current_week == "S/N":
                 current_week = "Semana 1"
 
@@ -157,17 +164,12 @@ def procesar_hoja_compleja(df_raw, nombre_hoja):
                     costoha_val = float(raw_ha)
             except: pass
 
-            # Validar que sea fila de datos real
-            # Si actividad está vacía o es "Total", saltar
+            # Validaciones Finales
             act_str = str(val_actividad).strip().lower()
-            if act_str in ["nan", "none", "", "total"]:
+            if act_str in ["nan", "none", "", "total", "subtotal"]:
                 continue
             
-            # Si columna 0 dice Total, saltar
-            if "total" in str(row_vals[0]).lower():
-                continue
-            
-            # Si no hay costos, saltar (salvo que sea un registro informativo, pero para costos no suma)
+            # Si no hay costos, saltar
             if costo88_val == 0 and costoha_val == 0:
                 continue
 
@@ -243,9 +245,6 @@ if uploaded_file:
     if seccion == "Resumen General":
         st.header(f"📊 Resumen General - {tipo_analisis}")
         
-        # Si selecciona meses futuros (Dic-Feb), usamos df_todo (incluye proyecciones)
-        # Si selecciona pasado (Sep-Nov), usamos operativo
-        # Para simplificar, usamos df_todo y filtramos
         df_viz = df_todo.copy()
         
         if mes_seleccionado != "General":
